@@ -1,5 +1,10 @@
 # D-14 Follow-up — chat UX + on-device STT
 
+> **Update 2026-08-24 (R-01/R-11):** локальная диктовка декодирует
+> ограниченное окно (префикс + хвост 15 c, лимит сессии 5 мин), а mic→host
+> стримится только внутри явной сессии — long-press кнопки микрофона в чате.
+> Детали — [D14_HARDENING.md](D14_HARDENING.md).
+
 Notes from the fourth D-14 iteration (2026-08-16). Builds on
 `D14_IMPLEMENTATION_NOTES.md` (first E2E pass), `D14_AI_CHAT_AND_SETTINGS.md`
 (multi-host + AI chat) and `D14_QR_PAIRING.md` (QR pairing). This pass makes the

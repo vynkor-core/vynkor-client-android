@@ -67,4 +67,32 @@ export ANDROID_HOME=$HOME/.android-sdk   # unset ANDROID_SDK_ROOT if it differs
 | `{id}.mic` | device→host stream | `AudioRecord` → host STT (PCM v1) |
 | `{id}.speaker` | host→device stream | `AudioTrack` (PCM v1) |
 
-License: MIT OR Apache-2.0.
+Licensed under either of [LICENSE-APACHE](LICENSE-APACHE) or
+[LICENSE-MIT](LICENSE-MIT), at your option.
+
+## App lock
+
+Cold-starting the app requires fingerprint (device PIN as fallback) before
+the agent UI is reachable — it holds host credentials and device data.
+Returning after ≥ 5 minutes in background re-locks the app. Devices with no
+enrolled authenticator pass through; cancelling the prompt closes the app.
+While locked, content is hidden from screenshots/recents (`FLAG_SECURE`).
+
+## Live status & telemetry
+
+The foreground notification mirrors the connection state
+(Connecting… / Connected to `<host>` / Reconnecting…). Settings and the
+drawer show fine-grained status incl. the failure reason
+(`Host unreachable — <reason>`, red) while dialing; the Connect button turns
+into an honest **Stop** during retries. Battery level and charging
+transitions are pushed to the host as `battery_status` events (debounced:
+snapshot on connect, Δlevel ≥ 5 %, charging flip) — no polling needed.
+
+## Chats & projects
+
+Chats can be grouped into **projects** (folders) from the drawer:
+create via `+` next to Projects, filter with the chips (`All chats` /
+project), new chats inherit the selected project, long-press a chat →
+*Move to project*, long-press a chip → rename/delete (deleting keeps the
+chats and moves them to “No project”).
+

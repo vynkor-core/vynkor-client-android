@@ -1,5 +1,11 @@
 # D-14 Follow-up — QR pairing (`vyn device connect`)
 
+> **Update 2026-08-24 (R-02/R-03):** QR из встроенного сканера применяется
+> как раньше, но тот же `vynkor://pair` от чужого приложения теперь требует
+> явного подтверждения («Connect to new host?»), а профиль хранится
+> зашифрованным (AndroidKeyStore) и исключён из cloud-backup. Детали —
+> [D14_HARDENING.md](D14_HARDENING.md).
+
 Notes from the third D-14 iteration (2026-08-16). Builds on
 `D14_IMPLEMENTATION_NOTES.md` (first E2E pass) and
 `D14_AI_CHAT_AND_SETTINGS.md` (multi-host + AI chat). This pass replaces the
