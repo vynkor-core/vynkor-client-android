@@ -164,8 +164,16 @@ class ChatStoreTest {
 
     @Test
     fun `search finds chats by title ignoring case`() {
-        ChatStore.save(context, "s1", Chat(id = "a", title = "Rust Ownership"))
-        ChatStore.save(context, "s1", Chat(id = "b", title = "grocery list"))
+        ChatStore.save(
+            context,
+            "s1",
+            Chat(id = "a", title = "Rust Ownership", updatedAt = 2_000),
+        )
+        ChatStore.save(
+            context,
+            "s1",
+            Chat(id = "b", title = "grocery list", updatedAt = 1_000),
+        )
 
         assertEquals("a", ChatStore.search(context, "s1", "rust").single().id)
         assertEquals(listOf("a", "b"), ChatStore.search(context, "s1", "S").map { it.id })
