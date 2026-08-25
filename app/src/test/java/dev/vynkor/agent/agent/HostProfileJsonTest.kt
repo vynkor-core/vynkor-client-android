@@ -19,7 +19,7 @@ class HostProfileJsonTest {
         hostUrl = "ws://10.0.0.2:7431",
         deviceId = "phone-1",
         jwtToken = "tok",
-        jwtSecret = "sec",
+        deviceSecret = "sec",
         certPem = "pem",
         userId = "behzod",
         aiProvider = "anthropic",
@@ -41,9 +41,30 @@ class HostProfileJsonTest {
         val p = HostProfile.fromJson(o)
         assertEquals("ws://h:1", p.hostUrl)
         assertEquals("", p.jwtToken)
-        assertEquals("", p.jwtSecret)
+        assertEquals("", p.deviceSecret)
         assertEquals("default", p.userId)
         assertTrue(p.id.isNotBlank())
+    }
+
+    @Test
+    fun `legacy jwt_secret key migrates to deviceSecret on load`() {
+        // pre-E-01 stored profiles kept the (master) secret under "jwt_secret"
+        val o = JSONObject(
+            """{"host_url":"ws://h:1","jwt_secret":"OLD-MASTER","device_id":"d"}"""
+        )
+        val p = HostProfile.fromJson(o)
+        assertEquals("OLD-MASTER", p.deviceSecret)
+        // and a re-save writes the new key only
+        assertTrue(!p.toJson().has("jwt_secret"))
+        assertEquals("sec", HostProfile(deviceSecret = "sec").toJson().optString("device_secret"))
+    }
+
+    @Test
+    fun `device_secret wins over legacy key when both present`() {
+        val o = JSONObject(
+            """{"host_url":"ws://h:1","jwt_secret":"OLD","device_secret":"NEW"}"""
+        )
+        assertEquals("NEW", HostProfile.fromJson(o).deviceSecret)
     }
 
     @Test
