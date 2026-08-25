@@ -73,6 +73,13 @@ object ProjectStore {
         }
     }
 
+    fun wipeAll(context: Context) {
+        val p = prefs(context)
+        p.all.keys
+            .filter { it.startsWith(QUARANTINE_PREFIX).not() }
+            .forEach { p.edit().remove(it).apply() }
+    }
+
     private fun persist(context: Context, profileId: String, projects: List<Project>) {
         val arr = JSONArray()
         projects.forEach { p ->

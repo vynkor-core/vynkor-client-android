@@ -91,6 +91,43 @@ object ChatStore {
         }
     }
 
+    /** Drops every chat of [profileId] (Settings -> Data -> Clear history). */
+    fun clear(context: Context, profileId: String) {
+        synchronized(lock) {
+            ensureLoaded(context, profileId)
+            if (cache.getValue(profileId).isNotEmpty()) {
+                cache.getValue(profileId).clear()
+                scheduleWrite(context, profileId)
+            }
+        }
+    }
+
+    /**
+     * All chats of [profileId] as a JSON array — the backup export format.
+     * Caller holds no lock; serialization happens under [lock].
+     */
+    fun exportJson(context: Context, profileId: String): String = synchronized(lock) {
+        ensureLoaded(context, profileId)
+        val arr = JSONArray()
+        cache.getValue(profileId).forEach { arr.put(chatToJson(it)) }
+        arr.toString()
+    }
+
+    /** Replaces [profileId]'s chats with the exported array; returns count. */
+    fun importJson(context: Context, profileId: String, json: String): Int = synchronized(lock) {
+        val parsed = try {
+            val arr = JSONArray(json)
+            (0 until arr.length()).map { chatFromJson(arr.getJSONObject(it)) }
+        } catch (e: Exception) {
+            Log.w(TAG, "backup import: bad chats json", e)
+            return 0
+        }
+        ensureLoaded(context, profileId)
+        cache[profileId] = parsed.toMutableList()
+        scheduleWrite(context, profileId)
+        parsed.size
+    }
+
     fun rename(context: Context, profileId: String, chatId: String, title: String) {
         synchronized(lock) {
             ensureLoaded(context, profileId)

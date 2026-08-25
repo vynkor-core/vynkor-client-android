@@ -5,25 +5,34 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import dev.vynkor.agent.agent.AgentHolder
 import dev.vynkor.agent.agent.AgentService
 import dev.vynkor.agent.agent.AppPrefs
+import dev.vynkor.agent.agent.ChatBackup
+import dev.vynkor.agent.agent.ChatStore
 import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.agent.ProfileStore
 import dev.vynkor.agent.agent.SecurityStore
 import dev.vynkor.agent.databinding.ActivityMainBinding
 import dev.vynkor.agent.databinding.DialogChatBehaviorBinding
 import dev.vynkor.agent.databinding.ItemSettingsRowBinding
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Settings hub (ui-reference style): connection card on top, grouped rows
@@ -59,6 +68,9 @@ class MainActivity : AppCompatActivity() {
 
         bindRow(binding.rowSecurity, R.drawable.ic_lock, R.string.security_title)
             .setOnClickListener { startActivity(Intent(this, SecurityActivity::class.java)) }
+
+        bindRow(binding.rowData, R.drawable.ic_data, R.string.data_title)
+            .setOnClickListener { showDataDialog() }
 
         bindRow(binding.rowAbout, R.drawable.ic_info, R.string.about_row)
             .setOnClickListener { showAbout() }
@@ -181,6 +193,180 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // ---------------------------------------------------------------- data
+
+    @Volatile
+    private var pendingExportJson: String? = null
+
+    private val exportLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        val json = pendingExportJson
+        pendingExportJson = null
+        if (uri == null || json == null) return@registerForActivityResult
+        lifecycleScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openOutputStream(uri)?.use {
+                        it.write(json.toByteArray(Charsets.UTF_8))
+                    } != null
+                }.getOrDefault(false)
+            }
+            Snackbar.make(
+                findViewById(android.R.id.content),
+                getString(if (ok) R.string.data_saved else R.string.data_export_failed),
+                Snackbar.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private val importLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) readBackupAndRestore(uri)
+    }
+
+    private fun showDataDialog() {
+        val options = arrayOf(
+            getString(R.string.data_export),
+            getString(R.string.data_import),
+            getString(R.string.data_clear_history),
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.data_title)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> startExport()
+                    1 -> importLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    2 -> confirmClearHistory()
+                }
+            }
+            .show()
+    }
+
+    private fun startExport() {
+        askPassword { password ->
+            lifecycleScope.launch {
+                pendingExportJson = withContext(Dispatchers.IO) {
+                    runCatching {
+                        ChatBackup.encryptToJson(ChatBackup.buildJson(this@MainActivity), password.toCharArray())
+                    }.getOrNull()
+                }
+                if (pendingExportJson == null) {
+                    Snackbar.make(
+                        findViewById(android.R.id.content),
+                        R.string.data_export_failed,
+                        Snackbar.LENGTH_LONG,
+                    ).show()
+                } else {
+                    val stamp = java.text.SimpleDateFormat(
+                        "yyyyMMdd-HHmm",
+                        java.util.Locale.US,
+                    ).format(java.util.Date())
+                    exportLauncher.launch("vynkor-backup-$stamp.json")
+                }
+            }
+        }
+    }
+
+    private fun readBackupAndRestore(uri: android.net.Uri) {
+        lifecycleScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                runCatching {
+                    contentResolver.openInputStream(uri)?.bufferedReader()?.readText()
+                }.getOrNull()
+            }
+            if (text.isNullOrBlank()) {
+                toast(R.string.data_import_bad_file)
+                return@launch
+            }
+            askPassword { password ->
+                lifecycleScope.launch {
+                    val decrypted = withContext(Dispatchers.IO) {
+                        ChatBackup.decryptToJson(text, password.toCharArray())
+                    }
+                    if (decrypted == null) {
+                        toast(R.string.data_import_wrong_password)
+                        return@launch
+                    }
+                    val stats = ChatBackup.peekStats(decrypted) ?: run {
+                        toast(R.string.data_import_bad_file)
+                        return@launch
+                    }
+                    MaterialAlertDialogBuilder(this@MainActivity)
+                        .setTitle(R.string.data_import)
+                        .setMessage(
+                            getString(
+                                R.string.data_restore_confirm_fmt,
+                                stats.profiles,
+                                stats.chats,
+                                stats.projects,
+                            ),
+                        )
+                        .setPositiveButton(R.string.replace_button) { _, _ ->
+                            lifecycleScope.launch {
+                                val done = withContext(Dispatchers.IO) {
+                                    ChatBackup.restore(this@MainActivity, decrypted) != null
+                                }
+                                if (!done) {
+                                    toast(R.string.data_import_bad_file)
+                                    return@launch
+                                }
+                                // New profile set — drop the live connection.
+                                AgentService.stop(this@MainActivity)
+                                refresh()
+                                toast(R.string.data_restored)
+                            }
+                        }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun confirmClearHistory() {
+        val profiles = ProfileStore.list(this)
+        val chats = profiles.sumOf { ChatStore.list(this, it.id).size }
+        if (chats == 0) {
+            toast(R.string.data_history_empty)
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.data_clear_history)
+            .setMessage(getString(R.string.data_clear_confirm_fmt, chats))
+            .setPositiveButton(R.string.delete_chat) { _, _ ->
+                profiles.forEach { ChatStore.clear(this, it.id) }
+                refresh()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun askPassword(onOk: (String) -> Unit) {
+        val input = EditText(this)
+        input.hint = getString(R.string.password_hint)
+        input.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        val holder = FrameLayout(this)
+        val pad = (24 * resources.displayMetrics.density).toInt()
+        holder.setPadding(pad, pad / 2, pad, 0)
+        holder.addView(input)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.password_title)
+            .setView(holder)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                if (input.text.length >= MIN_BACKUP_PASSWORD) onOk(input.text.toString())
+                else toast(R.string.data_short_password)
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun toast(res: Int) {
+        Toast.makeText(this, res, Toast.LENGTH_SHORT).show()
+    }
+
     private fun securitySubtitle(): String {
         val s = SecurityStore.get(this)
         return getString(if (s.hasPin) R.string.security_subtitle_pin else R.string.security_subtitle_bio)
@@ -231,6 +417,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val REQUEST_CODE_PERMS = 42
+        private const val MIN_BACKUP_PASSWORD = 4
 
         internal val PERMISSIONS = arrayOf(
             Manifest.permission.ACCESS_FINE_LOCATION,

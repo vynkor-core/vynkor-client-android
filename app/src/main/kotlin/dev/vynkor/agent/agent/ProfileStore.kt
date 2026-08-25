@@ -61,6 +61,14 @@ object ProfileStore {
         }
     }
 
+    /** Backup restore path: replaces the whole profile set atomically. */
+    fun replaceAll(context: Context, profiles: List<HostProfile>) {
+        persist(context, profiles)
+        prefs(context).edit()
+            .putString(KEY_ACTIVE, profiles.firstOrNull()?.id)
+            .apply()
+    }
+
     fun isConfigured(context: Context): Boolean =
         active(context)?.hostUrl?.isNotBlank() == true
 
