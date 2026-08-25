@@ -8,15 +8,21 @@ import androidx.core.content.ContextCompat
 import dev.vynkor.agent.Contact
 import dev.vynkor.agent.ContactsProvider
 
-/** Contact lookup via ContactsContract, filtered by query. */
+/**
+ * Contact lookup via ContactsContract, filtered by query.
+ *
+ * R-05: the host may ask for a row limit; anything outside 1..[CONTACTS_LIMIT]
+ * resolves to [CONTACTS_LIMIT], which is also the hard SQL ceiling so a full
+ * address book can never blow the frame payload budget. R-10: the permission
+ * is checked on every [list] call, not cached at construction — a grant made
+ * after service start works without restarting.
+ */
 class ContactsProviderImpl(context: Context) : ContactsProvider {
     private val ctx = context.applicationContext
-    private val granted = ContextCompat.checkSelfPermission(
-        ctx, Manifest.permission.READ_CONTACTS
-    ) == PackageManager.PERMISSION_GRANTED
 
-    override fun list(query: String): List<Contact> {
-        if (!granted) return emptyList()
+    override fun list(query: String, limit: UInt): List<Contact> {
+        if (!isGranted()) return emptyList()
+        val effectiveLimit = if (limit in 1u..CONTACTS_LIMIT) limit else CONTACTS_LIMIT
         val result = mutableListOf<Contact>()
         val selection = if (query.isNotBlank()) {
             "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
@@ -24,6 +30,8 @@ class ContactsProviderImpl(context: Context) : ContactsProvider {
             null
         }
         val args = if (query.isNotBlank()) arrayOf("%$query%") else null
+        val sortOrder =
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC LIMIT $effectiveLimit"
         val cursor = ctx.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(
@@ -32,7 +40,7 @@ class ContactsProviderImpl(context: Context) : ContactsProvider {
             ),
             selection,
             args,
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC",
+            sortOrder,
         ) ?: return result
         cursor.use {
             val nameIdx = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
@@ -47,5 +55,13 @@ class ContactsProviderImpl(context: Context) : ContactsProvider {
             }
         }
         return result
+    }
+
+    private fun isGranted(): Boolean =
+        ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CONTACTS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private companion object {
+        const val CONTACTS_LIMIT: UInt = 200u
     }
 }

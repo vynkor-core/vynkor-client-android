@@ -18,8 +18,12 @@ class BatteryProviderImpl(context: Context) : BatteryProvider {
 
     override fun temperatureC(): Float {
         // BATTERY_PROPERTY_TEMPERATURE is @hide in the SDK; use the numeric id
-        val t = bm.getIntProperty(5)
+        val t = bm.getIntProperty(BATTERY_PROPERTY_TEMPERATURE)
         // tenths of a degree Celsius
         return t / 10f
+    }
+
+    private companion object {
+        const val BATTERY_PROPERTY_TEMPERATURE = 5
     }
 }
