@@ -26,14 +26,7 @@
 
         <activity
             android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="vynkor" android:host="pair" />
-            </intent-filter>
-        </activity>
+            android:exported="true" />
 
         <activity
             android:name=".ProfileActivity"
@@ -58,9 +51,20 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
+        <!-- pairing deep links land here: the pairing UI and its R-02 confirm
+             dialog live in this activity. singleTop keeps a warm instance
+             routing through onNewIntent instead of stacking duplicates. -->
         <activity
             android:name=".HostsActivity"
-            android:exported="false" />
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="vynkor" android:host="pair" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".NotificationFilterActivity"

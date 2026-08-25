@@ -90,6 +90,22 @@ class HostsActivity : AppCompatActivity() {
         binding.addProfile.setOnClickListener {
             startActivity(Intent(this, ProfileActivity::class.java))
         }
+
+        handlePairIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handlePairIntent(intent)
+    }
+
+    // external vynkor://pair links (camera tap, browser, adb) land here;
+    // R-02: they go through the confirm dialog before anything applies
+    private fun handlePairIntent(i: Intent?) {
+        val raw = i?.dataString ?: return
+        if (!raw.startsWith("${PairingPayload.SCHEME}://")) return
+        i.data = null // re-delivery guard: apply once per intent
+        onPairingPayload(raw, external = true)
     }
 
     override fun onResume() {
