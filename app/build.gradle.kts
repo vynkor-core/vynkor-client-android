@@ -71,6 +71,20 @@ android {
         viewBinding = true
     }
 
+    // Self-describing artifact names instead of app-<abi>-<variant>.apk:
+    // dist/vynkor-agent-v0.1.0-arm64-v8a-debug.apk
+    // (ABI parsed from the default file name — no internal filter APIs.)
+    applicationVariants.all {
+        val variantName = name
+        outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            val abi = output.outputFileName
+                .removePrefix("app-")
+                .substringBeforeLast("-$variantName")
+            output.outputFileName = "vynkor-agent-v$versionName-$abi-$variantName.apk"
+        }
+    }
+
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }

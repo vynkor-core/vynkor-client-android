@@ -15,5 +15,8 @@
 # Local agent artifacts (run-continuation state)
 /.omo/
 
+# Release artifacts (reproducible from a commit; see dist/RELEASE_NOTES.md)
+/dist/
+
 # Local agent artifacts
 /.omo/
