@@ -1,5 +1,6 @@
 package dev.vynkor.agent
 
+import android.content.Context
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.style.BackgroundColorSpan
@@ -11,6 +12,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.color.MaterialColors
 import dev.vynkor.agent.agent.Chat
 import dev.vynkor.agent.databinding.ItemChatBinding
+import dev.vynkor.agent.databinding.ItemDayHeaderBinding
 
 /**
  * One drawer row: a chat plus the active search query (null = plain list).
@@ -20,20 +22,124 @@ import dev.vynkor.agent.databinding.ItemChatBinding
  */
 data class ChatRow(val chat: Chat, val query: String?)
 
+/** Drawer list item: either a day header (DeepSeek-style grouping) or a chat. */
+sealed class DrawerItem {
+    data class Header(val label: String) : DrawerItem()
+    data class ChatEntry(val row: ChatRow) : DrawerItem()
+
+    companion object {
+        const val TYPE_HEADER = 0
+        const val TYPE_CHAT = 1
+
+        /**
+         * Flat display list with header rows inserted whenever the day label
+         * changes; [rows] must already be sorted newest-first.
+         */
+        fun build(rows: List<ChatRow>, dayLabel: (Long) -> String): List<DrawerItem> {
+            val items = mutableListOf<DrawerItem>()
+            var lastLabel: String? = null
+            rows.forEach { row ->
+                val label = dayLabel(row.chat.updatedAt)
+                if (label != lastLabel) {
+                    items += Header(label)
+                    lastLabel = label
+                }
+                items += ChatEntry(row)
+            }
+            return items
+        }
+
+        /** 0 = today, 1 = yesterday, 2 = older. */
+        fun bucketDay(timestampMs: Long): Int {
+            val todayMidnight = java.util.Calendar.getInstance().let { midnight(it) }
+            val targetMidnight = java.util.Calendar.getInstance().apply {
+                timeInMillis = timestampMs
+            }.let { midnight(it) }
+            return when {
+                targetMidnight >= todayMidnight -> 0
+                targetMidnight >= todayMidnight - DAY_MS -> 1
+                else -> 2
+            }
+        }
+
+        private fun midnight(source: java.util.Calendar): Long =
+            (source.clone() as java.util.Calendar).apply {
+                set(
+                    get(java.util.Calendar.YEAR),
+                    get(java.util.Calendar.MONTH),
+                    get(java.util.Calendar.DAY_OF_MONTH),
+                    0,
+                    0,
+                    0,
+                )
+                set(java.util.Calendar.MILLISECOND, 0)
+            }.timeInMillis
+
+        private const val DAY_MS = 24L * 60 * 60 * 1000
+    }
+}
+
 class ChatListAdapter(
     private val onOpen: (Chat, String?) -> Unit,
     private val onLongPress: (Chat) -> Unit,
-) : ListAdapter<ChatRow, ChatListAdapter.Holder>(DIFF) {
+) : ListAdapter<DrawerItem, RecyclerView.ViewHolder>(DIFF) {
+
+    private var query: String? = null
+    private var contextRef: Context? = null
 
     fun submit(list: List<Chat>, query: String? = null) {
-        submitList(list.map { ChatRow(it, query) })
+        this.query = query
+        submitList(buildList(list))
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder =
-        Holder(ItemChatBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+    private fun buildList(chats: List<Chat>): List<DrawerItem> {
+        val ctx = contextRef ?: return chats.map { DrawerItem.ChatEntry(ChatRow(it, query)) }
+        val rows = chats.map { ChatRow(it, query) }
+        if (query?.isNotBlank() == true) return rows.map { DrawerItem.ChatEntry(it) }
+        val fmt = java.text.SimpleDateFormat("d MMMM", java.util.Locale.getDefault())
+        return DrawerItem.build(rows) { ts ->
+            when (DrawerItem.bucketDay(ts)) {
+                0 -> ctx.getString(R.string.day_today)
+                1 -> ctx.getString(R.string.day_yesterday)
+                else -> fmt.format(java.util.Date(ts))
+            }
+        }
+    }
 
-    override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.bind(getItem(position))
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        contextRef = recyclerView.context
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        contextRef = null
+    }
+
+    override fun getItemViewType(position: Int): Int = when (getItem(position)) {
+        is DrawerItem.Header -> DrawerItem.TYPE_HEADER
+        is DrawerItem.ChatEntry -> DrawerItem.TYPE_CHAT
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
+        if (viewType == DrawerItem.TYPE_HEADER) {
+            HeaderHolder(ItemDayHeaderBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+        } else {
+            Holder(ItemChatBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+        }
+
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (val item = getItem(position)) {
+            is DrawerItem.Header -> (holder as HeaderHolder).bind(item.label)
+            is DrawerItem.ChatEntry -> (holder as Holder).bind(item.row)
+        }
+    }
+
+    inner class HeaderHolder(private val binding: ItemDayHeaderBinding) :
+        RecyclerView.ViewHolder(binding.root) {
+        fun bind(label: String) {
+            binding.root.text = label
+        }
     }
 
     inner class Holder(private val binding: ItemChatBinding) :
@@ -48,18 +154,18 @@ class ChatListAdapter(
 
         fun bind(row: ChatRow) {
             val chat = row.chat
-            val query = row.query?.trim()?.takeIf { it.isNotEmpty() }
+            val q = row.query?.trim()?.takeIf { it.isNotEmpty() }
             binding.chatTitle.text =
                 highlighted(
                     chat.title.ifBlank { binding.root.context.getString(R.string.new_chat) },
-                    query,
+                    q,
                     highlightColor,
                 )
             binding.chatPreview.text =
-                if (query == null) {
+                if (q == null) {
                     chat.messages.lastOrNull()?.content.orEmpty()
                 } else {
-                    snippet(chat, query)?.let { highlighted(it, query, highlightColor) } ?: ""
+                    snippet(chat, q)?.let { highlighted(it, q, highlightColor) } ?: ""
                 }
             itemView.setOnClickListener { onOpen(chat, firstMatchId(row)) }
             itemView.setOnLongClickListener {
@@ -73,11 +179,16 @@ class ChatListAdapter(
         private const val SNIPPET_BEFORE = 24
         private const val SNIPPET_AFTER = 40
 
-        private val DIFF = object : DiffUtil.ItemCallback<ChatRow>() {
-            override fun areItemsTheSame(oldItem: ChatRow, newItem: ChatRow) =
-                oldItem.chat.id == newItem.chat.id
+        private val DIFF = object : DiffUtil.ItemCallback<DrawerItem>() {
+            override fun areItemsTheSame(oldItem: DrawerItem, newItem: DrawerItem) = when {
+                oldItem is DrawerItem.Header && newItem is DrawerItem.Header ->
+                    oldItem.label == newItem.label
+                oldItem is DrawerItem.ChatEntry && newItem is DrawerItem.ChatEntry ->
+                    oldItem.row.chat.id == newItem.row.chat.id
+                else -> false
+            }
 
-            override fun areContentsTheSame(oldItem: ChatRow, newItem: ChatRow) =
+            override fun areContentsTheSame(oldItem: DrawerItem, newItem: DrawerItem) =
                 oldItem == newItem
         }
 

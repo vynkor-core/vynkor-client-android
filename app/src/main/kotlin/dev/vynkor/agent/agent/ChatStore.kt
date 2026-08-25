@@ -87,6 +87,7 @@ object ChatStore {
             ensureLoaded(context, profileId)
             if (cache.getValue(profileId).removeAll { it.id == chatId }) {
                 scheduleWrite(context, profileId)
+                AttachmentStore.deleteChatDir(context, chatId)
             }
         }
     }
@@ -95,8 +96,10 @@ object ChatStore {
     fun clear(context: Context, profileId: String) {
         synchronized(lock) {
             ensureLoaded(context, profileId)
-            if (cache.getValue(profileId).isNotEmpty()) {
-                cache.getValue(profileId).clear()
+            val chats = cache.getValue(profileId)
+            if (chats.isNotEmpty()) {
+                chats.forEach { AttachmentStore.deleteChatDir(context, it.id) }
+                chats.clear()
                 scheduleWrite(context, profileId)
             }
         }
@@ -290,13 +293,25 @@ object ChatStore {
         put("project_id", chat.projectId)
         val msgs = JSONArray()
         chat.messages.forEach { m ->
-            msgs.put(
-                JSONObject()
-                    .put("id", m.id)
-                    .put("role", m.role)
-                    .put("content", m.content)
-                    .put("timestamp", m.timestamp),
-            )
+            val msgJson = JSONObject()
+                .put("id", m.id)
+                .put("role", m.role)
+                .put("content", m.content)
+                .put("timestamp", m.timestamp)
+            if (m.attachments.isNotEmpty()) {
+                val atts = JSONArray()
+                m.attachments.forEach { a ->
+                    atts.put(
+                        JSONObject()
+                            .put("id", a.id)
+                            .put("name", a.name)
+                            .put("mime", a.mime)
+                            .put("size_bytes", a.sizeBytes),
+                    )
+                }
+                msgJson.put("attachments", atts)
+            }
+            msgs.put(msgJson)
         }
         put("messages", msgs)
         put("pinned", chat.pinned)
@@ -308,6 +323,20 @@ object ChatStore {
         if (msgs != null) {
             for (i in 0 until msgs.length()) {
                 val m = msgs.getJSONObject(i)
+                val attachments = mutableListOf<Attachment>()
+                m.optJSONArray("attachments")?.let { atts ->
+                    for (j in 0 until atts.length()) {
+                        val a = atts.getJSONObject(j)
+                        attachments.add(
+                            Attachment(
+                                id = a.optString("id").ifBlank { UUID.randomUUID().toString() },
+                                name = a.optString("name"),
+                                mime = a.optString("mime", "application/octet-stream"),
+                                sizeBytes = a.optLong("size_bytes"),
+                            ),
+                        )
+                    }
+                }
                 messages.add(
                     ChatMessage(
                         // R-25: legacy rows have no id — a fresh UUID here is
@@ -316,6 +345,7 @@ object ChatStore {
                         role = m.optString("role"),
                         content = m.optString("content"),
                         timestamp = m.optLong("timestamp", System.currentTimeMillis()),
+                        attachments = attachments,
                     ),
                 )
             }

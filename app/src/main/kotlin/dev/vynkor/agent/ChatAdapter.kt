@@ -1,16 +1,23 @@
 package dev.vynkor.agent
 
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import android.view.View
 import android.widget.FrameLayout
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.Gravity
 import android.content.res.ColorStateList
+import dev.vynkor.agent.agent.AttachmentStore
 import dev.vynkor.agent.agent.ChatMessage
 import dev.vynkor.agent.databinding.ItemMessageBinding
 import io.noties.markwon.Markwon
@@ -36,7 +43,11 @@ class ChatAdapter(
     private val onMore: (ChatMessage, View) -> Unit,
     private val onSpeak: (ChatMessage) -> Unit,
     private val onTypingTap: (() -> Unit)? = null,
+    private val onAttachmentTap: ((String, dev.vynkor.agent.agent.Attachment) -> Unit)? = null,
 ) : ListAdapter<ChatMessage, ChatAdapter.Holder>(DIFF) {
+
+    /** Chat id owning the current list; used to resolve attachment paths. */
+    var chatId: String = ""
 
     private var speaking: ChatMessage? = null
 
@@ -125,6 +136,7 @@ class ChatAdapter(
 
         fun bind(message: ChatMessage, isSpeaking: Boolean) {
             val lp = binding.bubble.layoutParams as FrameLayout.LayoutParams
+            renderAttachments(message)
             when (message.role) {
                 "user" -> {
                     lp.gravity = Gravity.END
@@ -192,6 +204,114 @@ class ChatAdapter(
             )
         }
 
+        private fun renderAttachments(message: ChatMessage) {
+            val row = binding.attachmentsRow
+            row.removeAllViews()
+            val attachments = message.attachments
+            relayoutForAttachments(attachments.isNotEmpty())
+            if (attachments.isEmpty()) {
+                row.visibility = View.GONE
+                return
+            }
+            row.visibility = View.VISIBLE
+            val density = ctx.resources.displayMetrics.density
+            attachments.forEach { attachment ->
+                val card = com.google.android.material.card.MaterialCardView(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+                        bottomMargin = (6 * density).toInt()
+                    }
+                    radius = 12 * density
+                    strokeWidth = 0
+                    cardElevation = 0f
+                    setCardBackgroundColor(
+                        if (message.role == "user") 0x33FFFFFF else {
+                            ContextCompat.getColor(ctx, R.color.surface_variant)
+                        },
+                    )
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { onAttachmentTap?.invoke(chatId, attachment) }
+                }
+                if (attachment.isImage) {
+                    card.addView(ImageView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams((220 * density).toInt(), (150 * density).toInt())
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        contentDescription = ctx.getString(R.string.attachment_image_desc, attachment.name)
+                        clipToOutline = true
+                        decodeThumb(chatId, attachment)?.let { bitmap ->
+                            setImageBitmap(bitmap)
+                        } ?: setImageResource(R.drawable.ic_file)
+                    })
+                } else {
+                    val line = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(10 * density.toInt(), 8 * density.toInt(), 10 * density.toInt(), 8 * density.toInt())
+                    }
+                    line.addView(ImageView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams((22 * density).toInt(), (22 * density).toInt())
+                        setImageResource(R.drawable.ic_file)
+                        imageTintList = ColorStateList.valueOf(
+                            ContextCompat.getColor(
+                                ctx,
+                                if (message.role == "user") R.color.on_primary else R.color.on_surface,
+                            ),
+                        )
+                    })
+                    line.addView(TextView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+                            marginStart = 8 * density.toInt()
+                        }
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                        maxWidth = (200 * density).toInt()
+                        text = "${attachment.name} · ${attachment.humanSize()}" +
+                            if (attachment.isVideo) " · ${ctx.getString(R.string.attachment_video_badge)}" else ""
+                        setTextColor(
+                            ContextCompat.getColor(
+                                ctx,
+                                if (message.role == "user") R.color.on_primary else R.color.on_surface,
+                            ),
+                        )
+                    })
+                    card.addView(line)
+                }
+                row.addView(card)
+            }
+            binding.messageText.visibility =
+                if (message.content.isBlank() && message.role == "user") View.GONE else View.VISIBLE
+        }
+
+        private fun relayoutForAttachments(hasAttachments: Boolean) {
+            val lp = binding.messageText.layoutParams as ConstraintLayout.LayoutParams
+            if (hasAttachments) {
+                lp.topToTop = ConstraintLayout.LayoutParams.UNSET
+                lp.topToBottom = binding.attachmentsRow.id
+            } else {
+                lp.topToBottom = ConstraintLayout.LayoutParams.UNSET
+                lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+            }
+            binding.messageText.layoutParams = lp
+        }
+
+        private fun decodeThumb(
+            chatId: String,
+            attachment: dev.vynkor.agent.agent.Attachment,
+        ): android.graphics.Bitmap? {
+            val path = AttachmentStore.fileFor(ctx, chatId, attachment).absolutePath
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= 440 || bounds.outHeight / (sample * 2) >= 300) {
+                sample *= 2
+            }
+            return BitmapFactory.decodeFile(
+                path,
+                BitmapFactory.Options().apply { inSampleSize = sample },
+            )
+        }
+
         private fun markwon(): Markwon = markwon ?: createMarkwon(ctx).also { markwon = it }
 
         private fun color(resId: Int): Int = ContextCompat.getColor(ctx, resId)
@@ -220,7 +340,8 @@ class ChatAdapter(
             override fun areContentsTheSame(oldItem: ChatMessage, newItem: ChatMessage) =
                 oldItem.role == newItem.role &&
                     oldItem.content == newItem.content &&
-                    oldItem.timestamp == newItem.timestamp
+                    oldItem.timestamp == newItem.timestamp &&
+                    oldItem.attachments == newItem.attachments
         }
     }
 }

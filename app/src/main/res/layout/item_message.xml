@@ -27,6 +27,17 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
 
+        <!-- Attachments (photo/video/file) rendered above the text. -->
+        <LinearLayout
+            android:id="@+id/attachmentsRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
         <!-- Assistant-only action footer: copy + more on the left, the speaker
              pinned to the right edge of the bubble. Hidden for user/error. -->
         <LinearLayout
@@ -40,9 +51,7 @@
             android:visibility="gone"
             app:layout_constraintEnd_toEndOf="@id/messageText"
             app:layout_constraintStart_toStartOf="@id/messageText"
-            app:layout_constraintTop_toBottomOf="@id/messageText">
-
-            <ImageButton
+            app:layout_constraintTop_toBottomOf="@id/messageText">            <ImageButton
                 android:id="@+id/copyAction"
                 android:layout_width="48dp"
                 android:layout_height="48dp"

@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.ContextThemeWrapper
@@ -19,6 +20,7 @@ import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -38,6 +40,7 @@ import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
+import dev.vynkor.agent.agent.AiContext
 import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.databinding.ActivityChatBinding
 import dev.vynkor.agent.agent.AgentHolder
@@ -48,12 +51,15 @@ import dev.vynkor.agent.agent.AiClient
 import dev.vynkor.agent.agent.AiException
 import dev.vynkor.agent.agent.AiModel
 import dev.vynkor.agent.agent.AiPresets
+import dev.vynkor.agent.agent.Attachment
+import dev.vynkor.agent.agent.AttachmentStore
 import dev.vynkor.agent.agent.Chat
 import dev.vynkor.agent.agent.ChatMessage
 import dev.vynkor.agent.agent.ChatStore
 import dev.vynkor.agent.agent.HostProfile
 import dev.vynkor.agent.agent.ProfileStore
 import dev.vynkor.agent.agent.Project
+import dev.vynkor.agent.agent.ProjectFilesStore
 import dev.vynkor.agent.agent.ProjectStore
 import dev.vynkor.agent.agent.SttEngine
 import dev.vynkor.agent.agent.SttRecorder
@@ -65,6 +71,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 class ChatActivity : AppCompatActivity() {
 
@@ -82,6 +89,18 @@ class ChatActivity : AppCompatActivity() {
 
     private val recorder = SttRecorder()
     private var sttPending = false
+
+    private val pendingAttachments = mutableListOf<Attachment>()
+
+    private val mediaPicker =
+        registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            uri?.let { addPendingAttachment(it, null, null) }
+        }
+
+    private val filePicker =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            uris?.forEach { uri -> addPendingAttachment(uri, null, null) }
+        }
 
     /** Set when the host-stream flow asked for RECORD_AUDIO and is waiting. */
     @Volatile
@@ -168,6 +187,7 @@ class ChatActivity : AppCompatActivity() {
             onMore = { message, anchor -> showAssistantMoreMenu(message, anchor) },
             onSpeak = { toggleSpeak(it) },
             onTypingTap = { skipTypewriter() },
+            onAttachmentTap = { chatId, attachment -> openAttachment(chatId, attachment) },
         )
         list.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         list.adapter = adapter
@@ -201,8 +221,12 @@ class ChatActivity : AppCompatActivity() {
         // there is text to send. Same position, icon swaps.
         binding.composerAction.setOnClickListener {
             val hasText = input.text?.isNotBlank() == true
+            val hasAttachments = pendingAttachments.isNotEmpty()
             val dictating = recorder.isRecording() || sttPending || AgentHolder.micStreaming.value
-            if (hasText && !dictating) sendMessage(input) else toggleDictation(input)
+            when {
+                (hasText || hasAttachments) && !dictating -> sendMessage(input)
+                else -> toggleDictation(input)
+            }
         }
         binding.composerAction.setOnLongClickListener {
             pendingHostStream = false
@@ -213,6 +237,7 @@ class ChatActivity : AppCompatActivity() {
 
         binding.modelChip.setOnClickListener { showModelPicker() }
         binding.agentChip.setOnClickListener { showAgentPicker() }
+        binding.attachButton.setOnClickListener { showAttachMenu() }
 
         binding.setUpHost.setOnClickListener {
             startActivity(Intent(this, MainActivity::class.java))
@@ -398,6 +423,7 @@ class ChatActivity : AppCompatActivity() {
         partialJob?.cancel()
         partialJob = null
         sttSession = null
+        discardPendingAttachments()
         if (recorder.isRecording()) {
             recorder.stop()
         }
@@ -551,12 +577,20 @@ class ChatActivity : AppCompatActivity() {
     private fun onChipLongPress(label: String, reselect: () -> Unit) {
         val active = profile ?: return
         val project = ProjectStore.list(this, active.id).firstOrNull { it.name == label } ?: return
-        val options = arrayOf(getString(R.string.rename_chat), getString(R.string.delete_chat))
+        val options = arrayOf(
+            getString(R.string.project_files_menu),
+            getString(R.string.rename_chat),
+            getString(R.string.delete_chat),
+        )
         MaterialAlertDialogBuilder(this)
             .setTitle(project.name)
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> {
+                        ProjectFilesActivity.start(this, active.id, project.id, project.name)
+                        reselect()
+                    }
+                    1 -> {
                         val input = EditText(this)
                         input.hint = getString(R.string.project_name_hint)
                         input.setText(project.name)
@@ -577,11 +611,12 @@ class ChatActivity : AppCompatActivity() {
                             .setNegativeButton(R.string.cancel, null)
                             .show()
                     }
-                    1 -> MaterialAlertDialogBuilder(this)
+                    2 -> MaterialAlertDialogBuilder(this)
                         .setTitle(R.string.delete_project)
                         .setMessage(R.string.delete_project_confirm)
                         .setPositiveButton(R.string.delete_chat) { _, _ ->
                             ProjectStore.delete(this, active.id, project.id)
+                            ProjectFilesStore.deleteProjectDir(this, active.id, project.id)
                             ChatStore.clearProject(this, active.id, project.id)
                             selectedProjectId = null
                             refreshChatList()
@@ -623,6 +658,91 @@ class ChatActivity : AppCompatActivity() {
     private fun updateWelcome() {
         val show = profile != null && chat.messages.isEmpty()
         binding.welcomeState.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) {
+            binding.welcomeGreeting.text = "${greetingText()}, ${profile?.name?.ifBlank { null } ?: "vynkor"}"
+        }
+    }
+
+    private fun greetingText(): String {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        return getString(
+            when (hour) {
+                in 5..11 -> R.string.greeting_morning
+                in 12..17 -> R.string.greeting_afternoon
+                in 18..22 -> R.string.greeting_evening
+                else -> R.string.greeting_night
+            },
+        )
+    }
+
+    private fun showAttachMenu() {        val popup = PopupMenu(this, binding.attachButton)
+        popup.menu.add(0, 1, 0, R.string.attach_photo)
+        popup.menu.add(0, 2, 1, R.string.attach_file)
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> {
+                    mediaPicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
+                    )
+                    true
+                }
+                2 -> {
+                    filePicker.launch(arrayOf("*/*"))
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun addPendingAttachment(uri: Uri, displayName: String?, mimeHint: String?) {
+        val chatId = chat.id
+        val attachment = AttachmentStore.copyIn(this, chatId, uri, displayName, mimeHint)
+        if (attachment == null) {
+            snack(R.string.attachment_failed_copy_generic)
+            return
+        }
+        pendingAttachments.add(attachment)
+        renderPendingAttachmentChips()
+    }
+
+    private fun renderPendingAttachmentChips() {
+        val group: ChipGroup = binding.pendingAttachments
+        group.removeAllViews()
+        pendingAttachments.forEach { attachment ->
+            val chip = Chip(ContextThemeWrapper(this, com.google.android.material.R.style.Widget_Material3_Chip_Input))
+            chip.text = "${attachment.name} · ${attachment.humanSize()}"
+            chip.isCloseIconVisible = true
+            chip.closeIconContentDescription = getString(R.string.attachment_remove)
+            chip.setOnCloseIconClickListener {
+                AttachmentStore.deleteAll(this, chat.id, listOf(attachment))
+                pendingAttachments.remove(attachment)
+                renderPendingAttachmentChips()
+            }
+            group.addView(chip)
+        }
+        updateComposerButtons()
+    }
+
+    private fun clearPendingAttachmentChips() {
+        pendingAttachments.clear()
+        binding.pendingAttachments.removeAllViews()
+        updateComposerButtons()
+    }
+
+    private fun discardPendingAttachments() {
+        AttachmentStore.deleteAll(this, chat.id, pendingAttachments.toList())
+        clearPendingAttachmentChips()
+    }
+
+    private fun openAttachment(chatId: String, attachment: Attachment) {
+        val intent = AttachmentStore.viewIntent(this, chatId, attachment)
+        if (intent == null) {
+            snack(R.string.file_view_failed)
+            return
+        }
+        runCatching { startActivity(intent) }.onFailure { snack(R.string.file_view_failed) }
     }
 
     /** Tries to reach the last active host as soon as the app opens. */
@@ -664,8 +784,10 @@ class ChatActivity : AppCompatActivity() {
     private fun loadChat(loaded: Chat?) {
         skipTypewriter()
         drafts[chat.id] = binding.input.text?.toString().orEmpty()
+        discardPendingAttachments()
         // A fresh chat lands in the currently selected project (if any).
         chat = loaded ?: Chat(projectId = selectedProjectId.orEmpty())
+        adapter.chatId = chat.id
         adapter.submit(chat.messages)
         refreshTitle()
         updateWelcome()
@@ -818,7 +940,8 @@ class ChatActivity : AppCompatActivity() {
 
     private fun sendMessage(input: EditText) {
         val text = input.text?.toString()?.trim().orEmpty()
-        if (text.isEmpty() || busy) return
+        if (busy) return
+        if (text.isEmpty() && pendingAttachments.isEmpty()) return
         skipTypewriter()
         input.setText("")
 
@@ -827,7 +950,9 @@ class ChatActivity : AppCompatActivity() {
             return
         }
 
-        appendMessage(ChatMessage("user", text))
+        val attachments = pendingAttachments.toList()
+        clearPendingAttachmentChips()
+        appendMessage(ChatMessage("user", text, attachments = attachments))
         hapticTick()
         if (chat.title.isBlank()) {
             chat = ChatStore.autoTitle(chat)
@@ -862,9 +987,15 @@ class ChatActivity : AppCompatActivity() {
             val result = withContext(Dispatchers.IO) {
                 // R-05: send a bounded history window — a long chat must not
                 // blow the frame payload budget with every message.
-                val context = chat.messages.takeLast(HISTORY_WINDOW)
+                val history = chat.messages.takeLast(HISTORY_WINDOW)
                     .map { it.role to it.content }
-                runCatching { AiClient.chat(agent, active, context) }
+                val contextBlock = buildContextBlock(active.id)
+                val messages = if (contextBlock != null) {
+                    listOf("system" to contextBlock) + history
+                } else {
+                    history
+                }
+                runCatching { AiClient.chat(agent, active, messages) }
             }
             result.onSuccess { reply ->
                 val replyMessage = ChatMessage("assistant", reply.content)
@@ -880,6 +1011,33 @@ class ChatActivity : AppCompatActivity() {
             busy = false
             setBusyUi(false)
         }
+    }
+
+    /** System-role block: project name + project files + last user attachments. */
+    private fun buildContextBlock(profileId: String): String? {
+        val projectId = chat.projectId.takeIf { it.isNotBlank() }
+        val sources = mutableListOf<AiContext.Source>()
+        sources += ProjectFilesStore.contextSources(this, profileId, projectId)
+        chat.messages.lastOrNull { it.role == "user" && it.attachments.isNotEmpty() }
+            ?.attachments
+            ?.forEach { attachment ->
+                sources += AiContext.Source(
+                    name = attachment.name,
+                    typeLabel = attachmentTypeLabel(attachment),
+                    sizeLabel = attachment.humanSize(),
+                    textContent = AttachmentStore.readTextForContext(this, chat.id, attachment),
+                )
+            }
+        val projectName = projectId?.let { pid ->
+            ProjectStore.list(this, profileId).firstOrNull { it.id == pid }?.name
+        }
+        return AiContext.buildBlock(projectName, sources)
+    }
+
+    private fun attachmentTypeLabel(attachment: Attachment): String = when {
+        attachment.isImage -> "photo"
+        attachment.isVideo -> "video"
+        else -> "file"
     }
 
     private fun appendMessage(message: ChatMessage) {
@@ -1017,9 +1175,10 @@ class ChatActivity : AppCompatActivity() {
      */
     private fun updateComposerButtons() {
         val hasText = binding.input.text?.isNotBlank() == true
+        val hasAttachments = pendingAttachments.isNotEmpty()
         val dictating = recorder.isRecording() || sttPending || AgentHolder.micStreaming.value
         val action = binding.composerAction
-        if (hasText && !dictating) {
+        if ((hasText || hasAttachments) && !dictating) {
             action.setIconResource(R.drawable.ic_send)
             action.setIconTintResource(R.color.on_primary)
             action.backgroundTintList =
