@@ -59,13 +59,52 @@ export ANDROID_HOME=$HOME/.android-sdk   # unset ANDROID_SDK_ROOT if it differs
 
 | cap | direction | provider |
 |---|---|---|
-| `{id}.battery` | host→device request | `BatteryManager` |
+| `{id}.battery` | host→device request + push | `BatteryManager` |
 | `{id}.geo` | request + device→host push | `FusedLocationProvider`/`LocationManager` |
 | `{id}.notifications` | device→host event | `NotificationListenerService` |
 | `{id}.clipboard` | both | `ClipboardManager` |
 | `{id}.contacts` | host→device request | `ContactsContract` |
 | `{id}.mic` | device→host stream | `AudioRecord` → host STT (PCM v1) |
 | `{id}.speaker` | host→device stream | `AudioTrack` (PCM v1) |
+| `{id}.chat` | device→host requests | AI chat via the host's `ai` plugin |
+| `{id}.device` | host→device request | model/locale/screen facts |
+| `{id}.wifi` | host→device request | state + scan results |
+| `{id}.bluetooth` | host→device request | state + paired devices |
+| `{id}.dnd` | host→device get/set | zen mode (policy access) |
+| `{id}.ringer` | host→device get/set | normal/silent/vibrate |
+| `{id}.brightness` | host→device get/set | Settings.System (WRITE_SETTINGS) |
+| `{id}.flashlight` | host→device on/off/toggle | CameraManager torch |
+| `{id}.launcher` | host→device list/open | PackageManager |
+| `{id}.sms` | host→device request (read-only) | Telephony.Sms (READ_SMS) |
+| `{id}.calls` | host→device request (read-only) | CallLog (READ_CALL_LOG) |
+| `{id}.calendar` | host→device read/add | CalendarContract |
+
+Request/response schemas, limits and permission mapping for every capability:
+[docs/HOST_CAPABILITIES_PROTOCOL.md](docs/HOST_CAPABILITIES_PROTOCOL.md).
+Sensitive grants (SMS/calls/calendar/nearby-devices/brightness/DND) are never
+requested at service start — they are opt-in per capability from
+**Settings → Capabilities**, and each provider re-checks its grant on every call.
+
+## Chats & projects
+
+Chats can be grouped into **projects** (folders) from the drawer:
+create via `+` next to Projects, filter with the chips (`All chats` /
+project), new chats inherit the selected project, long-press a chat →
+*Move to project*, long-press a chip → rename / **Project files…** / delete
+(deleting keeps the chats and moves them to “No project”).
+
+**Project files** are per-project context folders: files added there are
+copied into app-private storage and their text contents (bounded) are injected
+into every AI request made from that project's chats. **Attachments** work the
+same way for single messages: photo/video via the system picker, any file via
+the document picker; images render as thumbnails in the bubble and everything
+is described to the AI in an injected system block.
+
+## Quick access
+
+* Quick Settings tile “vynkor agent” — one-tap start/stop of the agent.
+* Long-press launcher icon → *New chat* shortcut.
+* Share-to-app: text shared from other apps lands in the composer.
 
 Licensed under either of [LICENSE-APACHE](LICENSE-APACHE) or
 [LICENSE-MIT](LICENSE-MIT), at your option.
@@ -87,12 +126,4 @@ drawer show fine-grained status incl. the failure reason
 into an honest **Stop** during retries. Battery level and charging
 transitions are pushed to the host as `battery_status` events (debounced:
 snapshot on connect, Δlevel ≥ 5 %, charging flip) — no polling needed.
-
-## Chats & projects
-
-Chats can be grouped into **projects** (folders) from the drawer:
-create via `+` next to Projects, filter with the chips (`All chats` /
-project), new chats inherit the selected project, long-press a chat →
-*Move to project*, long-press a chip → rename/delete (deleting keeps the
-chats and moves them to “No project”).
 
