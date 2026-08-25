@@ -21,9 +21,9 @@ use crate::caps;
 use crate::error::AgentError;
 use crate::ffi::{
     ActionReply, ActionReplyStatus, AgentConfig, AgentObserver, BatteryProvider, ClipboardProvider,
-    ContactsProvider, Location, LocationProvider, SpeakerSink,
+    ConnectionStatus, ContactsProvider, Location, LocationProvider, SpeakerSink,
 };
-use crate::protocol::{build_frame, is_kernel_routed, target_str, Frame};
+use crate::protocol::{build_frame, check_payload_size, is_kernel_routed, target_str, Frame};
 use crate::transport::{CapConn, RegisterParams, BACKOFF_INITIAL, BACKOFF_MAX};
 
 /// Capability that carries outbound request/response traffic (target "kernel",
@@ -33,6 +33,18 @@ pub const CHAT_CAP: &str = "chat";
 /// Extra headroom over a request's timeout so the kernel's own terminal
 /// `ACTION_TIMEOUT` response can arrive instead of the device racing it.
 const REQUEST_TIMEOUT_MARGIN: Duration = Duration::from_secs(5);
+
+/// Device→host liveness ping cadence; a host that sends nothing for two
+/// intervals is treated as dead (half-open TCP detection).
+const PING_INTERVAL: Duration = Duration::from_secs(20);
+
+/// Read deadline: no inbound frame for this long ⇒ tear the connection down
+/// and reconnect, instead of hanging on a silently-lost TCP peer forever.
+const READ_DEADLINE: Duration = Duration::from_secs(40);
+
+/// A capability session that survived at least this long was healthy; its end
+/// resets the reconnect backoff instead of leaving it parked at the maximum.
+const BACKOFF_RESET_AFTER: Duration = Duration::from_secs(60);
 
 /// Lifecycle state; `is_connected()` is the only part visible to Kotlin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +56,13 @@ pub enum AgentState {
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|p| p.into_inner())
+    m.lock().unwrap_or_else(|p| {
+        // №52: recovery from a poisoned lock is deliberate (a panicking
+        // observer must not brick the agent), but data consistency under the
+        // mutex is no longer guaranteed — say so in the log.
+        tracing::warn!("poisoned lock recovered; guarded state may be inconsistent");
+        p.into_inner()
+    })
 }
 
 /// Frames the push paths queue onto a live connection; the per-cap write loop
@@ -75,6 +93,9 @@ pub struct Agent {
     /// loop resolves these when the correlated ActionResponse arrives
     pending: Mutex<HashMap<String, StdSender<ActionReply>>>,
     action_seq: AtomicU64,
+    /// outbound frames dropped because a per-cap queue was full or an
+    /// oversized payload was rejected; logged and reset at session teardown
+    dropped_outbound: AtomicU64,
     observer: Mutex<Option<Arc<dyn AgentObserver>>>,
 }
 
@@ -98,6 +119,7 @@ impl Agent {
             live: AtomicUsize::new(0),
             pending: Mutex::new(HashMap::new()),
             action_seq: AtomicU64::new(0),
+            dropped_outbound: AtomicU64::new(0),
             observer: Mutex::new(None),
         }
     }
@@ -111,21 +133,29 @@ impl Agent {
             tracing::warn!("agent already running");
             return;
         }
+        // R-07: stop() latches this flag; without resetting it a restarted
+        // agent would exit every cap loop on its first iteration.
+        self.shutdown.store(false, Ordering::SeqCst);
+        // Register the stop channel BEFORE spawning: stop() right after
+        // start() must always find a sender, or join() would hang forever.
+        let (stop_tx, stop_rx) = watch::channel(false);
+        *lock(&self.stop_tx) = Some(stop_tx);
         let me = Arc::clone(&self);
         let handle = std::thread::Builder::new()
             .name("vynkor-agent".into())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_multi_thread()
                     .enable_all()
-                    .worker_threads(2)
+                    .worker_threads(4) // R-08: headroom so one slow foreign call can't starve the rest
                     .thread_name("vynkor-agent-rt")
                     .build()
                     .expect("tokio runtime");
-                rt.block_on(me.run());
+                rt.block_on(me.run(stop_rx));
             })
             .expect("spawn agent thread");
         *lock(&self.runtime) = Some(handle);
         *lock(&self.state) = AgentState::Starting;
+        self.notify_status(ConnectionStatus::Connecting);
     }
 
     /// Gracefully stop all connections and the runtime thread.
@@ -137,6 +167,7 @@ impl Agent {
         if let Some(handle) = lock(&self.runtime).take() {
             let _ = handle.join();
         }
+        self.purge_pending();
         *lock(&self.state) = AgentState::Stopped;
     }
 
@@ -213,6 +244,16 @@ impl Agent {
                 status: ActionReplyStatus::Local,
                 data_json: Vec::new(),
                 error: "encode request".into(),
+            };
+        }
+        // R-05: an oversized frame would be rejected by the gateway mid-flight
+        // and tear the connection down; fail locally instead.
+        if let Err(e) = check_payload_size(&payload) {
+            self.take_pending(&action_id);
+            return ActionReply {
+                status: ActionReplyStatus::Local,
+                data_json: Vec::new(),
+                error: format!("request rejected: {e}"),
             };
         }
 
@@ -322,6 +363,29 @@ impl Agent {
         self.send_raw_frame(&tx, env, "kernel");
     }
 
+    /// Battery level/charging changed (Kotlin debounces the raw
+    /// ACTION_BATTERY_CHANGED spam) — publish as a device event so the host
+    /// sees telemetry without polling `device.battery`.
+    pub fn push_battery_status(&self, level_percent: u8, charging: bool) {
+        let Some(tx) = self.live_channel("battery") else {
+            tracing::warn!("battery: no live connection, dropping event");
+            return;
+        };
+        let payload = serde_json::json!({
+            "level_percent": level_percent,
+            "charging": charging,
+        });
+        let ev = veyron_wire::proto::veyron::EventPublish {
+            event_type: "battery_status".into(),
+            payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
+        };
+        let env = Envelope {
+            payload: Some(envelope::Payload::EventPublish(ev)),
+            ..Default::default()
+        };
+        self.send_raw_frame(&tx, env, "kernel");
+    }
+
     /// A slow location fix is ready (push path) — publish as a device event.
     pub fn push_geo_update(&self, loc: Location) {
         let Some(tx) = self.live_channel("geo") else {
@@ -360,16 +424,13 @@ impl Agent {
         }
     }
 
-    async fn run(self: Arc<Self>) {
-        let (stop_tx, stop_rx) = watch::channel(false);
-        *lock(&self.stop_tx) = Some(stop_tx);
+    async fn run(self: Arc<Self>, mut stop_rx: watch::Receiver<bool>) {
         for cap in self.config.capabilities.clone() {
             spawn_cap_loop(Arc::clone(&self), cap, stop_rx.clone());
         }
         // keep the runtime alive until stop(); cap loops exit via the watch
-        let mut rx = stop_rx;
-        while !*rx.borrow() {
-            if rx.changed().await.is_err() {
+        while !*stop_rx.borrow() {
+            if stop_rx.changed().await.is_err() {
                 break;
             }
         }
@@ -401,6 +462,47 @@ impl Agent {
         }));
     }
 
+    fn notify_status(&self, status: ConnectionStatus) {
+        let Some(observer) = lock(&self.observer).clone() else {
+            return;
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            observer.on_status(status);
+        }));
+    }
+
+    /// Queue one frame onto a live cap connection, accounting drops.
+    /// Returns false when the frame was not queued. Never blocks: a full
+    /// queue drops the frame (R-09) instead of stalling the push path.
+    fn enqueue_outbound(&self, tx: &mpsc::Sender<Outbound>, frame: Frame) -> bool {
+        if let Err(e) = check_payload_size(&frame.payload) {
+            let total = self.dropped_outbound.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::warn!(total_dropped = total, error = %e, "outbound payload too large, dropping");
+            return false;
+        }
+        match tx.try_send(Outbound { frame }) {
+            Ok(()) => true,
+            Err(e) => {
+                let total = self.dropped_outbound.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::warn!(total_dropped = total, error = %e, "outbound queue full, dropping frame");
+                false
+            }
+        }
+    }
+
+    /// Drop all in-flight request waiters. Called when the connection dies
+    /// and on stop(): blocked `request()` callers wake up immediately with
+    /// `Disconnected` instead of waiting out their full timeout.
+    fn purge_pending(&self) {
+        let mut pending = lock(&self.pending);
+        if pending.is_empty() {
+            return;
+        }
+        let n = pending.len();
+        pending.clear();
+        tracing::info!(purged = n, "pending requests released");
+    }
+
     fn send_raw_frame(&self, tx: &mpsc::Sender<Outbound>, env: Envelope, target: &str) {
         let mut payload = Vec::new();
         if env.encode(&mut payload).is_err() {
@@ -408,7 +510,7 @@ impl Agent {
             return;
         }
         let frame = build_frame(target, 0, payload);
-        let _ = tx.try_send(Outbound { frame });
+        self.enqueue_outbound(tx, frame);
     }
 
     // ---- provider accessors (caps dispatch) ----
@@ -435,10 +537,22 @@ impl Agent {
 
     // ---- inbound dispatch ----
 
-    /// Handle one host→device frame on a capability connection.
-    async fn dispatch_inbound(&self, frame: &Frame, cap: &str, out: &mpsc::Sender<Outbound>) {
+    /// Handle one host→device frame on a capability connection. Provider
+    /// calls (UniFFI → JVM) and speaker playback run on blocking threads so a
+    /// slow capability can never stall this read loop (R-08).
+    async fn dispatch_inbound(
+        self: &Arc<Self>,
+        frame: &Frame,
+        cap: &str,
+        out: &mpsc::Sender<Outbound>,
+    ) {
         if frame.flags & FLAG_RAW_BINARY != 0 {
-            caps::audio::handle_raw_inbound(self, frame, cap);
+            let agent = Arc::clone(self);
+            let payload = frame.payload.as_ref().to_vec();
+            let cap_owned = cap.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::caps::audio::handle_raw_inbound(&agent, &payload, &cap_owned);
+            });
             return;
         }
         let Ok(env) = Envelope::decode(frame.payload.as_ref()) else {
@@ -456,11 +570,16 @@ impl Agent {
                     payload: Some(envelope::Payload::Pong(pong)),
                     ..Default::default()
                 };
-                self.reply(out, resp).await;
+                self.reply(out, resp);
             }
             Some(envelope::Payload::ActionRequest(req)) => {
-                let resp = caps::handle_action_request(self, cap, req);
-                self.reply(out, resp).await;
+                let agent = Arc::clone(self);
+                let out = out.clone();
+                let cap_name = cap.to_string();
+                tokio::task::spawn_blocking(move || {
+                    let resp_env = caps::handle_action_request(&agent, &cap_name, req);
+                    agent.reply(&out, resp_env);
+                });
             }
             Some(envelope::Payload::ActionResponse(resp)) => {
                 if let Some(tx) = self.take_pending(&resp.action_id) {
@@ -492,13 +611,13 @@ impl Agent {
         }
     }
 
-    async fn reply(&self, out: &mpsc::Sender<Outbound>, env: Envelope) {
+    fn reply(&self, out: &mpsc::Sender<Outbound>, env: Envelope) {
         let mut payload = Vec::new();
         if env.encode(&mut payload).is_err() {
             return;
         }
         let frame = build_frame("kernel", 0, payload);
-        let _ = out.send(Outbound { frame }).await;
+        self.enqueue_outbound(out, frame);
     }
 }
 
@@ -548,18 +667,27 @@ fn init_tracing() {
 }
 
 /// One capability's reconnect loop: connect → register → read/write until the
-/// connection dies or the agent shuts down, then backoff and retry.
+/// connection dies or the agent shuts down, then backoff and retry. A session
+/// that lived ≥ [BACKOFF_RESET_AFTER] counts as healthy and resets the backoff
+/// (R-06: no more permanent 30 s stalls after a burst of flaps).
 async fn cap_loop(agent: Arc<Agent>, cap: String, mut stop_rx: watch::Receiver<bool>) {
     let mut backoff = BACKOFF_INITIAL;
     loop {
         if agent.shutdown.load(Ordering::SeqCst) || *stop_rx.borrow() {
             return;
         }
+        let started = tokio::time::Instant::now();
         match one_cycle(agent.clone(), cap.clone()).await {
             Ok(()) => tracing::info!(cap, "connection closed"),
             Err(AgentError::Shutdown) => return,
-            Err(e) => tracing::warn!(cap, error = %e, "connection failed"),
+            Err(e) => {
+                tracing::warn!(cap, error = %e, "connection failed");
+                agent.notify_status(ConnectionStatus::ReachabilityFailed {
+                    reason: e.to_string(),
+                });
+            }
         }
+        backoff = next_backoff(backoff, started.elapsed());
         // poll shutdown during the backoff sleep so stop() is responsive
         let deadline = tokio::time::Instant::now() + backoff;
         loop {
@@ -570,7 +698,15 @@ async fn cap_loop(agent: Arc<Agent>, cap: String, mut stop_rx: watch::Receiver<b
                 }
             }
         }
-        backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+/// Pure decision helper: how long to wait before the next reconnect attempt.
+fn next_backoff(current: Duration, session_lived: Duration) -> Duration {
+    if session_lived >= BACKOFF_RESET_AFTER {
+        BACKOFF_INITIAL
+    } else {
+        (current * 2).min(BACKOFF_MAX)
     }
 }
 
@@ -586,6 +722,7 @@ async fn one_cycle(agent: Arc<Agent>, cap: String) -> Result<(), AgentError> {
         let mut caps = lock(&agent.caps);
         caps.insert(cap.clone(), out_tx.clone());
     }
+    agent.dropped_outbound.store(0, Ordering::Relaxed);
     let prev_live = agent.live.fetch_add(1, Ordering::Relaxed);
     *lock(&agent.state) = AgentState::Connected;
     if prev_live == 0 {
@@ -612,12 +749,25 @@ async fn one_cycle(agent: Arc<Agent>, cap: String) -> Result<(), AgentError> {
         }
     });
 
+    // device→host liveness ping (R-06): keeps half-open TCP detectable by the
+    // read deadline even when neither side has user traffic
+    let ping_task = spawn_ping_task(out_tx.clone());
+
     let result = loop {
         use futures_util::StreamExt;
-        let frame = match read.next().await {
+        let msg = match tokio::time::timeout(READ_DEADLINE, read.next()).await {
+            Err(_elapsed) => break Err(AgentError::Ws("read deadline exceeded".into())),
+            Ok(m) => m,
+        };
+        let frame = match msg {
             Some(Ok(tokio_tungstenite::tungstenite::Message::Binary(data))) => {
-                let mut f = crate::protocol::parse_frame(&data)?;
-                crate::protocol::verify_inbound(&mut f, session_key.as_ref())?;
+                let mut f = match crate::protocol::parse_frame(&data) {
+                    Ok(f) => f,
+                    Err(e) => break Err(e),
+                };
+                if let Err(e) = crate::protocol::verify_inbound(&mut f, session_key.as_ref()) {
+                    break Err(e);
+                }
                 f
             }
             Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_))) | None => {
@@ -634,8 +784,14 @@ async fn one_cycle(agent: Arc<Agent>, cap: String) -> Result<(), AgentError> {
     };
 
     write_task.abort();
+    ping_task.abort();
     let prev_live = agent.live.fetch_sub(1, Ordering::Relaxed);
     lock(&agent.caps).remove(&cap);
+    agent.purge_pending();
+    let dropped = agent.dropped_outbound.swap(0, Ordering::Relaxed);
+    if dropped > 0 {
+        tracing::warn!(cap, dropped, "outbound frames dropped during session");
+    }
     if prev_live == 1 {
         *lock(&agent.state) = AgentState::Disconnected;
         agent.notify_state(false);
@@ -643,10 +799,120 @@ async fn one_cycle(agent: Arc<Agent>, cap: String) -> Result<(), AgentError> {
     result
 }
 
+/// Periodic Ping envelopes onto a live connection; exits when the outbound
+/// queue dies (session over) and never blocks on a full queue.
+fn spawn_ping_task(out_tx: mpsc::Sender<Outbound>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(PING_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await; // Interval fires immediately once; skip that
+        loop {
+            ticker.tick().await;
+            let ts = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let env = Envelope {
+                payload: Some(envelope::Payload::Ping(veyron_wire::proto::veyron::Ping {
+                    timestamp: ts,
+                })),
+                ..Default::default()
+            };
+            let mut payload = Vec::new();
+            if env.encode(&mut payload).is_err() {
+                continue;
+            }
+            match out_tx.try_send(Outbound {
+                frame: build_frame("kernel", 0, payload),
+            }) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => continue,
+                Err(mpsc::error::TrySendError::Closed(_)) => return,
+            }
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use veyron_wire::framing::MAX_PAYLOAD_SIZE;
     use veyron_wire::proto::veyron::ActionStatus as Status;
+
+    fn test_config() -> AgentConfig {
+        AgentConfig {
+            host_url: "ws://127.0.0.1:9".into(),
+            jwt_token: String::new(),
+            jwt_secret: String::new(),
+            cert_pem: String::new(),
+            device_id: "test-device".into(),
+            capabilities: Vec::new(),
+            os_version: "14".into(),
+            arch: "x86_64".into(),
+            user_id: "default".into(),
+        }
+    }
+
+    #[test]
+    fn restart_after_stop_resets_shutdown_flag() {
+        let agent = Arc::new(Agent::new(test_config()));
+        Arc::clone(&agent).start();
+        agent.stop();
+        assert!(agent.shutdown.load(Ordering::SeqCst));
+        assert!(matches!(*lock(&agent.state), AgentState::Stopped));
+
+        Arc::clone(&agent).start();
+        assert!(
+            !agent.shutdown.load(Ordering::SeqCst),
+            "start() must clear the latched shutdown flag (R-07)"
+        );
+        agent.stop();
+        assert!(matches!(*lock(&agent.state), AgentState::Stopped));
+    }
+
+    #[test]
+    fn purge_pending_releases_waiters() {
+        let agent = Arc::new(Agent::new(test_config()));
+        let (tx, rx) = std::sync::mpsc::channel::<ActionReply>();
+        lock(&agent.pending).insert("act-1".into(), tx);
+
+        agent.purge_pending();
+
+        assert!(lock(&agent.pending).is_empty());
+        // sender dropped → the blocked request() wakes up as Disconnected
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Err(RecvTimeoutError::Disconnected) => {}
+            Err(RecvTimeoutError::Timeout) => panic!("sender still alive after purge"),
+            Ok(_) => panic!("unexpected reply after purge"),
+        }
+    }
+
+    #[test]
+    fn backoff_grows_on_failures_and_resets_after_healthy_session() {
+        let mut b = BACKOFF_INITIAL;
+        for _ in 0..10 {
+            b = next_backoff(b, Duration::ZERO);
+        }
+        assert_eq!(b, BACKOFF_MAX, "failures must cap at BACKOFF_MAX");
+
+        // a long-lived session resets to initial
+        assert_eq!(next_backoff(b, BACKOFF_RESET_AFTER), BACKOFF_INITIAL);
+        // a short-lived session keeps growing
+        assert_eq!(
+            next_backoff(BACKOFF_INITIAL, Duration::from_secs(1)),
+            Duration::from_secs(2)
+        );
+    }
+
+    #[test]
+    fn enqueue_rejects_oversized_payload_and_counts_drop() {
+        let agent = Agent::new(test_config());
+        let (tx, rx) = mpsc::channel::<Outbound>(1);
+        drop(rx); // closed → try_send fails
+        let big = build_frame("kernel", 0, vec![0u8; MAX_PAYLOAD_SIZE + 1]);
+        assert!(!agent.enqueue_outbound(&tx, big));
+        assert_eq!(agent.dropped_outbound.load(Ordering::Relaxed), 1);
+    }
 
     #[test]
     fn maps_action_statuses() {

@@ -19,14 +19,6 @@ pub enum AgentError {
     Shutdown,
 }
 
-impl AgentError {
-    /// True when the connection should be torn down and retried by the
-    /// reconnect loop (vs. a fatal config error).
-    pub fn is_retryable(&self) -> bool {
-        !matches!(self, AgentError::Shutdown)
-    }
-}
-
 impl From<tokio_tungstenite::tungstenite::Error> for AgentError {
     fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
         AgentError::Ws(e.to_string())

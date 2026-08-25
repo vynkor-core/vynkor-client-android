@@ -7,7 +7,8 @@
 
 /// Connection config. `jwt_secret` is the host kernel's `jwt_secret` value —
 /// needed to derive the per-session frame-MAC key (same rule as the D-06
-/// bridge). Never persisted by the app.
+/// bridge). On the device it is stored only inside the app's encrypted
+/// profile store (Android Keystore, AES-GCM) and excluded from cloud backups.
 #[derive(uniffi::Record)]
 pub struct AgentConfig {
     /// Host kernel WS endpoint, e.g. `wss://host:port/ws`.
@@ -72,6 +73,19 @@ pub struct ActionReply {
     pub error: String,
 }
 
+/// Fine-grained connection progress for the UI, emitted between the coarse
+/// connected/disconnected transitions of [AgentObserver::on_state_changed].
+#[derive(uniffi::Enum)]
+pub enum ConnectionStatus {
+    /// start() ran; cap loops are dialing.
+    Connecting,
+    /// A reconnect attempt failed while nothing is live — carries the OS/
+    /// transport reason (e.g. "No route to host", "Connection refused").
+    ReachabilityFailed {
+        reason: String,
+    },
+}
+
 /// Kotlin-implemented observer the core notifies on connection-state changes
 /// so the UI can show a live indicator without polling.
 #[uniffi::export(with_foreign)]
@@ -80,6 +94,10 @@ pub trait AgentObserver: Send + Sync {
     /// connection live" and "none live". Runs on the agent's runtime thread —
     /// implementations must not block (post to the main thread if needed).
     fn on_state_changed(&self, connected: bool);
+
+    /// Progress detail between transitions; may fire often (once per failed
+    /// cap attempt) — implementations should conflate.
+    fn on_status(&self, status: ConnectionStatus);
 }
 
 // ---------- foreign traits: Kotlin implements, Rust pulls ----------
@@ -106,10 +124,12 @@ pub trait ClipboardProvider: Send + Sync {
     fn write(&self, text: String);
 }
 
-/// Backend for `device.contacts` — query-filtered list.
+/// Backend for `device.contacts` — query-filtered list. `limit` comes from
+/// the host's request (0 = provider default); the Rust dispatcher hard-caps
+/// it, and the provider must not return more rows than asked.
 #[uniffi::export(with_foreign)]
 pub trait ContactsProvider: Send + Sync {
-    fn list(&self, query: String) -> Vec<Contact>;
+    fn list(&self, query: String, limit: u32) -> Vec<Contact>;
 }
 
 /// Output for `device.speaker` — Rust hands decoded PCM (s16le mono, 16 kHz)

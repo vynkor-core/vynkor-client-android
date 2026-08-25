@@ -41,10 +41,19 @@ fn action_battery(agent: &Agent, _req: &ActionRequest) -> Result<serde_json::Val
     let Some(p) = agent.battery_provider() else {
         return Err("battery provider not registered".into());
     };
+    // Sanity-check the raw sensor readout: Android reports
+    // Integer.MIN_VALUE when the property is unavailable, which used to reach
+    // the host as -214748364.8 °C.
+    let raw_temp = p.temperature_c();
+    let temperature = if (-40.0..=100.0).contains(&raw_temp) {
+        serde_json::json!(raw_temp)
+    } else {
+        serde_json::Value::Null
+    };
     Ok(serde_json::json!({
         "level_percent": p.level_percent(),
         "is_charging": p.is_charging(),
-        "temperature_c": p.temperature_c(),
+        "temperature_c": temperature,
     }))
 }
 
@@ -82,16 +91,30 @@ fn action_clipboard(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Va
     Err(format!("unknown clipboard action `{action}`"))
 }
 
+/// Hard ceiling regardless of what the host asks for (R-05 payload budget).
+const CONTACTS_MAX_LIMIT: u32 = 200;
+
 fn action_contacts(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Value, String> {
     let Some(p) = agent.contacts_provider() else {
         return Err("contacts provider not registered".into());
     };
-    let query = serde_json::from_slice::<serde_json::Value>(&req.params_json)
+    let params = serde_json::from_slice::<serde_json::Value>(&req.params_json)
         .ok()
-        .and_then(|v| v.get("query").cloned())
-        .and_then(|v| v.as_str().map(String::from))
-        .unwrap_or_default();
-    let list = p.list(query);
+        .unwrap_or(serde_json::Value::Null);
+    let query = params
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let host_limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    // 0 = no preference → ceiling; anything above the ceiling is clamped here
+    // so a hostile/buggy request cannot bypass it.
+    let limit = if host_limit == 0 || host_limit > CONTACTS_MAX_LIMIT {
+        CONTACTS_MAX_LIMIT
+    } else {
+        host_limit
+    };
+    let list = p.list(query, limit);
     let json: Vec<serde_json::Value> = list
         .iter()
         .map(|c| {

@@ -20,10 +20,14 @@ use veyron_wire::proto::veyron::{envelope, DeviceOs, Envelope, PluginRegister, P
 use veyron_wire::PROTOCOL_VERSION;
 
 use crate::error::AgentError;
-use crate::protocol::{arm_mac, build_frame, frame_to_bytes, parse_frame, verify_inbound, Frame};
+use crate::protocol::{build_frame, frame_to_bytes, parse_frame};
 
 pub const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 pub const BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+/// R-06: a host that accepts the handshake but never acks the register must
+/// not wedge the cap loop forever on `ws.next()`.
+pub const REGISTER_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -148,38 +152,6 @@ impl CapConn {
         })
     }
 
-    /// Read one frame, verifying crc + mac (when armed). The returned frame
-    /// has the mac stripped and the flag cleared.
-    pub async fn recv_frame(&mut self) -> Result<Frame, AgentError> {
-        loop {
-            match self.read.next().await {
-                Some(Ok(WsMessage::Binary(data))) => {
-                    let mut frame = parse_frame(&data)?;
-                    verify_inbound(&mut frame, self.session_key.as_ref())?;
-                    return Ok(frame);
-                }
-                Some(Ok(WsMessage::Close(_))) | None => {
-                    return Err(AgentError::Ws("websocket closed".into()));
-                }
-                // control frames are ignored; the gateway never sends traffic
-                // as text
-                Some(Ok(_)) => continue,
-                Some(Err(e)) => return Err(AgentError::from(e)),
-            }
-        }
-    }
-
-    /// Send a frame (mac'd if a session key is armed). One WS binary message.
-    pub async fn send_frame(&mut self, mut frame: Frame) -> Result<(), AgentError> {
-        if let Some(key) = &self.session_key {
-            arm_mac(&mut frame, key);
-        }
-        self.write
-            .send(WsMessage::Binary(frame_to_bytes(&frame).into()))
-            .await
-            .map_err(AgentError::from)
-    }
-
     /// Split into the stream halves for concurrent read/write loops. The
     /// session key is Copy, so both halves can verify/arm.
     pub fn into_parts(
@@ -204,13 +176,19 @@ async fn await_ack(
     plugin_id: &str,
 ) -> Result<Option<[u8; 32]>, AgentError> {
     loop {
-        let frame = match ws.next().await {
-            Some(Ok(WsMessage::Binary(data))) => parse_frame(&data)?,
-            Some(Ok(WsMessage::Close(_))) | None => {
+        let frame = match tokio::time::timeout(REGISTER_ACK_TIMEOUT, ws.next()).await {
+            Err(_elapsed) => {
+                return Err(AgentError::Connect(format!(
+                    "no register ack within {}s",
+                    REGISTER_ACK_TIMEOUT.as_secs()
+                )));
+            }
+            Ok(Some(Ok(WsMessage::Binary(data)))) => parse_frame(&data)?,
+            Ok(Some(Ok(WsMessage::Close(_)))) | Ok(None) => {
                 return Err(AgentError::Ws("websocket closed during register".into()));
             }
-            Some(Ok(_)) => continue,
-            Some(Err(e)) => return Err(AgentError::from(e)),
+            Ok(Some(Ok(_))) => continue,
+            Ok(Some(Err(e))) => return Err(AgentError::from(e)),
         };
         let env = Envelope::decode(frame.payload.as_ref()).map_err(|e| {
             AgentError::Wire(veyron_wire::WireError::Internal(format!(
