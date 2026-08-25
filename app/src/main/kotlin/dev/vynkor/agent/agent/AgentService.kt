@@ -10,21 +10,36 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import dev.vynkor.agent.Agent
 import dev.vynkor.agent.AgentConfig
 import dev.vynkor.agent.AgentObserver
-import dev.vynkor.agent.MainActivity
+import dev.vynkor.agent.ChatActivity
+import dev.vynkor.agent.ConnectionStatus
 import dev.vynkor.agent.R
+import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.caps.BatteryProviderImpl
 import dev.vynkor.agent.caps.ClipboardProviderImpl
 import dev.vynkor.agent.caps.ContactsProviderImpl
 import dev.vynkor.agent.caps.LocationProviderImpl
 import dev.vynkor.agent.caps.SpeakerSinkImpl
+import java.util.concurrent.Executors
 
 /** Foreground service holding the agent connection. One per active host. */
 class AgentService : Service() {
     private var agent: Agent? = null
+
+    @Volatile
+    private var sink: SpeakerSinkImpl? = null
     private val micCapture = MicCapture()
+    private val micSession by lazy { MicSessionController(micCapture) }
+    private var batteryEvents: BatteryEventSource? = null
+    private val cleanupExecutor =
+        Executors.newSingleThreadExecutor { r -> Thread(r, "vynkor-agent-cleanup") }
+
+    /** Live line shown in the foreground notification (updated by observer). */
+    @Volatile
+    private var connectionLine: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -70,24 +85,84 @@ class AgentService : Service() {
         a.setLocation(LocationProviderImpl(this))
         a.setClipboard(ClipboardProviderImpl(this))
         a.setContacts(ContactsProviderImpl(this))
-        a.setSpeaker(SpeakerSinkImpl())
+        val speaker = SpeakerSinkImpl()
+        a.setSpeaker(speaker)
+        sink = speaker
+
+        val hostLabel = profile.name.ifBlank {
+            profile.hostUrl.substringAfter("://").substringBefore(':')
+        }
+        connectionLine = getString(R.string.service_connecting)
         a.setObserver(object : AgentObserver {
             override fun onStateChanged(connected: Boolean) {
                 AgentHolder.connectionState.value = connected
+                AgentHolder.hostStatus.value =
+                    if (connected) HostStatus.Connected else HostStatus.Reconnecting
+                connectionLine = if (connected) {
+                    getString(R.string.service_connected_to, hostLabel)
+                } else {
+                    getString(R.string.service_reconnecting)
+                }
+                updateNotification()
+            }
+
+            override fun onStatus(status: ConnectionStatus) {
+                when (status) {
+                    is ConnectionStatus.Connecting ->
+                        AgentHolder.hostStatus.value = HostStatus.Connecting
+                    is ConnectionStatus.ReachabilityFailed ->
+                        // Meaningful only while nothing is live; otherwise the
+                        // UI already shows Connected/Reconnecting.
+                        if (!AgentHolder.connectionState.value) {
+                            AgentHolder.hostStatus.value =
+                                HostStatus.Unreachable(status.reason)
+                        }
+                }
             }
         })
         agent = a
         AgentHolder.agent = a
+        AgentHolder.micSession = micSession
         a.start()
-        micCapture.start(a, this)
+
+        batteryEvents = BatteryEventSource(this) { level, charging ->
+            a.pushBatteryStatus(level, charging)
+        }.also { it.start() }
+        updateNotification()
+        // R-01: the host-streamed mic is NOT tied to the service lifecycle.
+        // Audio leaves the phone only inside an explicit MicSessionController
+        // session (chat UI long-press on the mic button).
     }
 
     private fun stopAgent() {
-        micCapture.stop()
-        agent?.stop()
+        val stopping = agent
         agent = null
+        batteryEvents?.stop()
+        batteryEvents = null
         AgentHolder.agent = null
+        AgentHolder.micSession = null
         AgentHolder.connectionState.value = false
+        AgentHolder.micStreaming.value = false
+        AgentHolder.hostStatus.value = HostStatus.Idle
+        // Audio teardown involves bounded joins (MicCapture.stop) and Rust
+        // runtime shutdown — keep both off the main thread (R-04).
+        cleanupExecutor.execute {
+            try {
+                micSession.stopSession("service stopped")
+                sink?.release()
+                sink = null
+                stopping?.stop()
+            } catch (e: Exception) {
+                Log.w(TAG, "agent cleanup failed", e)
+            }
+        }
+    }
+
+    private fun updateNotification() {
+        getSystemService(NotificationManager::class.java)?.notify(
+            NOTIFICATION_ID,
+            buildNotification(),
+        )
     }
 
     override fun onDestroy() {
@@ -109,12 +184,17 @@ class AgentService : Service() {
             this, 0, Intent(this, AgentService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return Notification.Builder(this, CHANNEL_ID)
+        val contentIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, ChatActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.service_notification_title))
-            .setContentText(getString(R.string.service_notification_text))
+            .setContentText(connectionLine ?: getString(R.string.service_notification_text))
             .setSmallIcon(R.drawable.ic_stat_vynkor)
+            .setContentIntent(contentIntent)
             .setOngoing(true)
-            .addAction(0, "Stop", stopIntent)
+            .addAction(0, getString(R.string.disconnect_button), stopIntent)
             .build()
     }
 
