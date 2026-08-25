@@ -19,10 +19,21 @@ import dev.vynkor.agent.ConnectionStatus
 import dev.vynkor.agent.R
 import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.caps.BatteryProviderImpl
+import dev.vynkor.agent.caps.BluetoothProviderImpl
+import dev.vynkor.agent.caps.BrightnessProviderImpl
+import dev.vynkor.agent.caps.CalendarProviderImpl
+import dev.vynkor.agent.caps.CallsProviderImpl
 import dev.vynkor.agent.caps.ClipboardProviderImpl
 import dev.vynkor.agent.caps.ContactsProviderImpl
+import dev.vynkor.agent.caps.DeviceInfoProviderImpl
+import dev.vynkor.agent.caps.DndProviderImpl
+import dev.vynkor.agent.caps.FlashlightProviderImpl
+import dev.vynkor.agent.caps.LauncherProviderImpl
 import dev.vynkor.agent.caps.LocationProviderImpl
+import dev.vynkor.agent.caps.RingerProviderImpl
+import dev.vynkor.agent.caps.SmsProviderImpl
 import dev.vynkor.agent.caps.SpeakerSinkImpl
+import dev.vynkor.agent.caps.WifiProviderImpl
 import java.util.concurrent.Executors
 
 /** Foreground service holding the agent connection. One per active host. */
@@ -74,7 +85,9 @@ class AgentService : Service() {
             certPem = profile.certPem,
             deviceId = profile.deviceId,
             capabilities = listOf(
-                "geo", "battery", "notifications", "clipboard", "contacts", "mic", "speaker", "chat"
+                "geo", "battery", "notifications", "clipboard", "contacts", "mic", "speaker", "chat",
+                "device", "wifi", "bluetooth", "dnd", "ringer", "brightness",
+                "flashlight", "launcher", "sms", "calls", "calendar",
             ),
             osVersion = Build.VERSION.RELEASE,
             arch = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
@@ -88,6 +101,17 @@ class AgentService : Service() {
         val speaker = SpeakerSinkImpl()
         a.setSpeaker(speaker)
         sink = speaker
+        a.setDeviceInfo(DeviceInfoProviderImpl(this))
+        a.setWifi(WifiProviderImpl(this))
+        a.setBluetooth(BluetoothProviderImpl(this))
+        a.setDnd(DndProviderImpl(this))
+        a.setRinger(RingerProviderImpl(this))
+        a.setBrightness(BrightnessProviderImpl(this))
+        a.setFlashlight(FlashlightProviderImpl(this))
+        a.setLauncher(LauncherProviderImpl(this))
+        a.setSms(SmsProviderImpl(this))
+        a.setCalls(CallsProviderImpl(this))
+        a.setCalendar(CalendarProviderImpl(this))
 
         val hostLabel = profile.name.ifBlank {
             profile.hostUrl.substringAfter("://").substringBefore(':')

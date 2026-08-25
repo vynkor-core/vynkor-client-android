@@ -60,6 +60,9 @@ class MainActivity : AppCompatActivity() {
         bindRow(binding.rowNotifications, R.drawable.ic_notifications, R.string.notifications_title)
             .setOnClickListener { startActivity(Intent(this, NotificationFilterActivity::class.java)) }
 
+        bindRow(binding.rowCaps, R.drawable.ic_lock, R.string.caps_permissions_title)
+            .setOnClickListener { startActivity(Intent(this, CapPermissionsActivity::class.java)) }
+
         bindRow(binding.rowAppearance, R.drawable.ic_palette, R.string.appearance_title)
             .setOnClickListener { showAppearanceDialog() }
 
@@ -127,6 +130,7 @@ class MainActivity : AppCompatActivity() {
         binding.activeHost.text = active?.hostUrl ?: ""
         binding.rowHosts.rowSubtitle.text = getString(R.string.hosts_count_fmt, ProfileStore.list(this).size)
         binding.rowNotifications.rowSubtitle.text = notificationSubtitle()
+        binding.rowCaps.rowSubtitle.text = capsSubtitle()
         binding.rowAppearance.rowSubtitle.text = themeSubtitle()
         binding.rowChat.rowSubtitle.text = chatBehaviorSubtitle()
         binding.rowSecurity.rowSubtitle.text = securitySubtitle()
@@ -136,6 +140,18 @@ class MainActivity : AppCompatActivity() {
         val muted = AppPrefs.mutedPackages(this).size
         return if (muted == 0) getString(R.string.notif_filter_all_forwarded)
         else getString(R.string.notif_filter_muted_fmt, muted)
+    }
+
+    private fun capsSubtitle(): String {
+        val runtimeCaps = listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.READ_CONTACTS,
+        )
+        val on = runtimeCaps.count {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+        return getString(R.string.caps_subtitle_fmt, on, runtimeCaps.size)
     }
 
     private fun themeSubtitle(): String = getString(

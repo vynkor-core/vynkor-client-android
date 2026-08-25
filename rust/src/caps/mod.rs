@@ -6,6 +6,7 @@ use veyron_wire::proto::veyron::{envelope, ActionRequest, ActionResponse, Action
 use crate::agent::Agent;
 
 pub mod audio;
+pub mod device;
 
 /// Handle one host→device ActionRequest for a capability. The response echoes
 /// the request `action_id` so the host router can match it to the caller.
@@ -16,6 +17,17 @@ pub fn handle_action_request(agent: &Agent, cap: &str, req: ActionRequest) -> En
         "geo" => action_geo(agent, &req),
         "clipboard" => action_clipboard(agent, &req),
         "contacts" => action_contacts(agent, &req),
+        "device" => device::device_info(agent),
+        "wifi" => device::wifi(agent, &req),
+        "bluetooth" => device::bluetooth(agent, &req),
+        "dnd" => device::dnd(agent, &req),
+        "ringer" => device::ringer(agent, &req),
+        "brightness" => device::brightness(agent, &req),
+        "flashlight" => device::flashlight(agent, &req),
+        "launcher" => device::launcher(agent, &req),
+        "sms" => device::sms(agent, &req),
+        "calls" => device::calls(agent, &req),
+        "calendar" => device::calendar(agent, &req),
         _ => Err(format!("unknown capability `{cap}`")),
     };
     let (status, data_json, error) = match resp {
@@ -106,14 +118,10 @@ fn action_contacts(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Val
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    let host_limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let host_limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(0);
     // 0 = no preference → ceiling; anything above the ceiling is clamped here
     // so a hostile/buggy request cannot bypass it.
-    let limit = if host_limit == 0 || host_limit > CONTACTS_MAX_LIMIT {
-        CONTACTS_MAX_LIMIT
-    } else {
-        host_limit
-    };
+    let limit = device::clamp_limit(host_limit, CONTACTS_MAX_LIMIT);
     let list = p.list(query, limit);
     let json: Vec<serde_json::Value> = list
         .iter()

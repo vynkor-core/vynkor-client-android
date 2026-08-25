@@ -139,3 +139,183 @@ pub trait ContactsProvider: Send + Sync {
 pub trait SpeakerSink: Send + Sync {
     fn play_pcm(&self, pcm: Vec<u8>);
 }
+
+// ---------- extended device controls (Tier-1.5 capabilities) ----------
+
+/// Static device facts behind `device.info`.
+#[derive(uniffi::Record)]
+pub struct DeviceInfo {
+    pub model: String,
+    pub manufacturer: String,
+    pub brand: String,
+    pub android_release: String,
+    pub sdk_int: u16,
+    pub locale: String,
+    pub screen_width_px: u32,
+    pub screen_height_px: u32,
+}
+
+#[uniffi::export(with_foreign)]
+pub trait DeviceInfoProvider: Send + Sync {
+    fn snapshot(&self) -> DeviceInfo;
+}
+
+/// Wi-Fi state + scan results behind `device.wifi`.
+#[derive(uniffi::Record)]
+pub struct WifiStatus {
+    pub enabled: bool,
+    /// Connected network SSID (quoted form stripped); empty when not connected.
+    pub ssid: String,
+    pub ip: String,
+    pub link_speed_mbps: i32,
+}
+
+#[derive(uniffi::Record)]
+pub struct WifiNetwork {
+    pub ssid: String,
+    pub bssid: String,
+    /// Signal strength in dBm (negative; closer to 0 = stronger).
+    pub rssi: i32,
+    pub secure: bool,
+}
+
+#[uniffi::export(with_foreign)]
+pub trait WifiProvider: Send + Sync {
+    fn status(&self) -> Option<WifiStatus>;
+    /// Fresh or last-known scan results; empty list = nothing visible.
+    fn scan(&self) -> Vec<WifiNetwork>;
+}
+
+/// Bluetooth state + paired devices behind `device.bluetooth`.
+#[derive(uniffi::Record)]
+pub struct BluetoothStatus {
+    pub enabled: bool,
+    pub adapter_name: String,
+}
+
+#[derive(uniffi::Record)]
+pub struct PairedBluetoothDevice {
+    pub name: String,
+    pub address: String,
+    pub connected: bool,
+}
+
+#[uniffi::export(with_foreign)]
+pub trait BluetoothProvider: Send + Sync {
+    fn status(&self) -> Option<BluetoothStatus>;
+    fn paired(&self) -> Vec<PairedBluetoothDevice>;
+}
+
+/// Do-not-disturb control behind `device.dnd`. Filter names:
+/// "off" | "priority" | "alarms" | "none" (total silence) | "unknown".
+#[uniffi::export(with_foreign)]
+pub trait DndProvider: Send + Sync {
+    fn filter(&self) -> String;
+    /// Returns false when the device refuses (no policy access granted).
+    fn set_filter(&self, mode: String) -> bool;
+}
+
+/// Ringer mode behind `device.ringer`: "normal" | "silent" | "vibrate".
+#[uniffi::export(with_foreign)]
+pub trait RingerProvider: Send + Sync {
+    fn mode(&self) -> String;
+    fn set_mode(&self, mode: String) -> bool;
+}
+
+/// Screen brightness behind `device.brightness`. Level is the raw Android
+/// 0..=255 scale; auto = adaptive brightness.
+#[uniffi::export(with_foreign)]
+pub trait BrightnessProvider: Send + Sync {
+    fn level(&self) -> Option<u8>;
+    fn auto(&self) -> bool;
+    fn set_level(&self, level: u8) -> bool;
+    fn set_auto(&self, on: bool) -> bool;
+}
+
+/// Torch behind `device.flashlight`.
+#[uniffi::export(with_foreign)]
+pub trait FlashlightProvider: Send + Sync {
+    fn available(&self) -> bool;
+    fn is_on(&self) -> bool;
+    fn set_on(&self, on: bool) -> bool;
+}
+
+/// An installed, launchable app.
+#[derive(uniffi::Record)]
+pub struct AppEntry {
+    pub package_name: String,
+    pub app_name: String,
+}
+
+/// App listing + launch behind `device.launcher`.
+#[uniffi::export(with_foreign)]
+pub trait LauncherProvider: Send + Sync {
+    fn apps(&self) -> Vec<AppEntry>;
+    /// Bring the app to the foreground; false = unknown package / no intent.
+    fn launch(&self, package_name: String) -> bool;
+}
+
+/// One SMS message from the device inbox.
+#[derive(uniffi::Record)]
+pub struct SmsMessage {
+    pub sender: String,
+    pub body: String,
+    pub timestamp_ms: i64,
+}
+
+/// Recent SMS behind `device.sms` — read-only, host-limited rows.
+#[uniffi::export(with_foreign)]
+pub trait SmsProvider: Send + Sync {
+    fn inbox(&self, query: String, limit: u32) -> Vec<SmsMessage>;
+}
+
+/// One call-log entry.
+#[derive(uniffi::Record)]
+pub struct CallLogEntry {
+    pub number: String,
+    pub name: String,
+    /// "incoming" | "outgoing" | "missed" | "rejected" | "other"
+    pub call_type: String,
+    pub timestamp_ms: i64,
+    pub duration_s: u32,
+}
+
+/// Recent calls behind `device.calls` — read-only.
+#[uniffi::export(with_foreign)]
+pub trait CallsProvider: Send + Sync {
+    fn recent(&self, limit: u32) -> Vec<CallLogEntry>;
+}
+
+/// A calendar occurrence.
+#[derive(uniffi::Record)]
+pub struct CalendarEvent {
+    pub title: String,
+    pub description: String,
+    pub location: String,
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub calendar_name: String,
+}
+
+#[derive(uniffi::Enum)]
+pub enum CalendarWriteResult {
+    /// Event inserted; carries its row id.
+    Added { event_id: i64 },
+    /// Provider refused: permission missing or the insert failed.
+    Failed { reason: String },
+}
+
+/// Calendar behind `device.calendar` — read upcoming events, add new ones.
+#[uniffi::export(with_foreign)]
+pub trait CalendarProvider: Send + Sync {
+    /// Events starting within the next `days_ahead` days, soonest first.
+    fn upcoming(&self, days_ahead: u32, limit: u32) -> Vec<CalendarEvent>;
+    fn add_event(
+        &self,
+        title: String,
+        description: String,
+        location: String,
+        start_ms: i64,
+        end_ms: i64,
+    ) -> CalendarWriteResult;
+}
