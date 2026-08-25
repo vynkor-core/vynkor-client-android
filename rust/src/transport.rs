@@ -75,10 +75,12 @@ impl CapConn {
             .map_err(|e| AgentError::Connect(e.to_string()))?;
         // same handshake as the SDK/bridge: JWT rides the subprotocol header,
         // never the URL (access-log hygiene)
+        // kernel validates the first entry != "vynkor" — sending the old
+        // "veyron" name made it treat that literal string as the token (401)
         let protocol = if params.jwt_token.is_empty() {
-            "veyron".to_string()
+            "vynkor".to_string()
         } else {
-            format!("veyron, {}", params.jwt_token)
+            format!("vynkor, {}", params.jwt_token)
         };
         let value =
             HeaderValue::from_str(&protocol).map_err(|e| AgentError::Connect(e.to_string()))?;
