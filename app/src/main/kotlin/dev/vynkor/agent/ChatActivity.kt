@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.ContextThemeWrapper
 import android.view.View
 import android.widget.EditText
@@ -16,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -33,7 +35,10 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
+import dev.vynkor.agent.databinding.ActivityChatBinding
 import dev.vynkor.agent.agent.AgentHolder
+import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.agent.AgentService
 import dev.vynkor.agent.agent.AiAgent
 import dev.vynkor.agent.agent.AiClient
@@ -45,6 +50,8 @@ import dev.vynkor.agent.agent.ChatMessage
 import dev.vynkor.agent.agent.ChatStore
 import dev.vynkor.agent.agent.HostProfile
 import dev.vynkor.agent.agent.ProfileStore
+import dev.vynkor.agent.agent.Project
+import dev.vynkor.agent.agent.ProjectStore
 import dev.vynkor.agent.agent.SttEngine
 import dev.vynkor.agent.agent.SttRecorder
 import dev.vynkor.agent.agent.SttSession
@@ -61,6 +68,7 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var adapter: ChatAdapter
     private lateinit var drawerAdapter: ChatListAdapter
     private lateinit var drawer: DrawerLayout
+    private lateinit var binding: ActivityChatBinding
     private var profile: HostProfile? = null
     private lateinit var chat: Chat
     private var busy = false
@@ -72,29 +80,55 @@ class ChatActivity : AppCompatActivity() {
     private val recorder = SttRecorder()
     private var sttPending = false
 
+    /** Set when the host-stream flow asked for RECORD_AUDIO and is waiting. */
+    @Volatile
+    private var pendingHostStream = false
+
+    /** Set when [autoConnect] asked for permissions and waits for the result. */
+    private var pendingServiceStart = false
+
     // Live-dictation state (offline model, emulated streaming).
     @Volatile
     private var sttSession: SttSession? = null
     private var partialJob: Job? = null
     private var sttDraftPrefix = ""
 
+    /** Last draft the dictation loop wrote; detects manual edits (R-24). */
+    @Volatile
+    private var lastGeneratedDraft: String? = null
+
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
-                startDictation()
+                if (pendingHostStream) {
+                    pendingHostStream = false
+                    toggleHostStream()
+                } else {
+                    startDictation()
+                }
             } else {
-                Toast.makeText(this, R.string.mic_permission_denied, Toast.LENGTH_SHORT).show()
+                pendingHostStream = false
+                snack(R.string.mic_permission_denied)
             }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_chat)
+        enableEdgeToEdge()
+        binding = ActivityChatBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        applyInsetPadding()
 
         profile = ProfileStore.active(this)
         chat = Chat()
 
-        drawer = findViewById(R.id.drawer)
+        drawer = binding.drawer
+        // R-20 (№32): fixed 300dp was ~94% of a narrow screen — cap at 80%.
+        val panel = binding.drawerPanel
+        panel.layoutParams.width = minOf(
+            (resources.displayMetrics.widthPixels * 8) / 10,
+            (300 * resources.displayMetrics.density).toInt(),
+        )
 
         // Opening the drawer (chats/settings) hides the keyboard right away.
         drawer.addDrawerListener(object : DrawerLayout.SimpleDrawerListener() {
@@ -103,16 +137,14 @@ class ChatActivity : AppCompatActivity() {
             }
         })
 
-        val toolbar = findViewById<MaterialToolbar>(R.id.toolbar)
+        val toolbar = binding.toolbar
         refreshTitle()
         refreshModelChip()
         toolbar.setNavigationOnClickListener { drawer.openDrawer(GravityCompat.START) }
         toolbar.setOnClickListener { showModelPicker() }
 
-        val list = findViewById<RecyclerView>(R.id.messages)
-        val input = findViewById<EditText>(R.id.input)
-        val send = findViewById<MaterialButton>(R.id.send)
-        val mic = findViewById<MaterialButton>(R.id.mic)
+        val list = binding.messages
+        val input = binding.input
 
         adapter = ChatAdapter(
             onUserLongPress = { message, anchor -> showUserMessageMenu(message, anchor) },
@@ -124,24 +156,62 @@ class ChatActivity : AppCompatActivity() {
         list.adapter = adapter
         adapter.submit(chat.messages)
 
-        send.setOnClickListener { sendMessage(input) }
-        mic.setOnClickListener { toggleDictation(input) }
+        list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                updateScrollDownButton()
+            }
+        })
+        adapter.registerAdapterDataObserver(object : RecyclerView.AdapterDataObserver() {
+            override fun onChanged() {
+                list.post { updateScrollDownButton() }
+            }
+
+            override fun onItemRangeInserted(positionStart: Int, itemCount: Int) {
+                list.post { updateScrollDownButton() }
+            }
+        })
+        binding.scrollDown.setOnClickListener {
+            if (adapter.itemCount > 0) list.smoothScrollToPosition(adapter.itemCount - 1)
+        }
+
+        // Single composer action slot: mic when empty/dictating, send when
+        // there is text to send. Same position, icon swaps.
+        binding.composerAction.setOnClickListener {
+            val hasText = input.text?.isNotBlank() == true
+            val dictating = recorder.isRecording() || sttPending || AgentHolder.micStreaming.value
+            if (hasText && !dictating) sendMessage(input) else toggleDictation(input)
+        }
+        binding.composerAction.setOnLongClickListener {
+            pendingHostStream = false
+            toggleHostStream()
+            true
+        }
         input.doAfterTextChanged { updateComposerButtons() }
 
-        findViewById<Chip>(R.id.modelChip).setOnClickListener { showModelPicker() }
-        findViewById<Chip>(R.id.agentChip).setOnClickListener { showAgentPicker() }
+        binding.modelChip.setOnClickListener { showModelPicker() }
+        binding.agentChip.setOnClickListener { showAgentPicker() }
 
-        findViewById<MaterialButton>(R.id.setUpHost).setOnClickListener {
+        binding.setUpHost.setOnClickListener {
             startActivity(Intent(this, MainActivity::class.java))
         }
 
-        findViewById<MaterialButton>(R.id.newChat).setOnClickListener { loadChat(null) }
-        findViewById<MaterialButton>(R.id.settings).setOnClickListener {
+        binding.newChat.setOnClickListener {
+            loadChat(null)
+            drawer.closeDrawers()
+        }
+        binding.addProject.setOnClickListener { showNewProjectDialog() }
+        binding.settings.setOnClickListener {
             drawer.closeDrawers()
             startActivity(Intent(this, MainActivity::class.java))
         }
+        binding.lockNow.setOnClickListener {
+            // Manual lock: drop the session flag and show the lock screen.
+            AppLock.unlocked = false
+            drawer.closeDrawers()
+            startActivity(Intent(this, LockActivity::class.java))
+        }
 
-        val drawerChats = findViewById<RecyclerView>(R.id.drawerChats)
+        val drawerChats = binding.drawerChats
         drawerAdapter = ChatListAdapter(
             onOpen = { loadChat(it) },
             onLongPress = { showChatMenu(it) },
@@ -149,12 +219,25 @@ class ChatActivity : AppCompatActivity() {
         drawerChats.layoutManager = LinearLayoutManager(this)
         drawerChats.adapter = drawerAdapter
 
+        // Drawer search: title + message contents, composed with the
+        // selected project chip inside refreshChatList().
+        binding.drawerSearch.doAfterTextChanged { text ->
+            searchQuery = text?.toString().orEmpty()
+            refreshChatList()
+        }
+        binding.drawerSearch.setOnEditorActionListener { v, _, _ ->
+            v.clearFocus()
+            false
+        }
+
         updateHostState()
         refreshChatList()
         updateWelcome()
+        restoreState(savedInstanceState)
+        applySharedText(savedInstanceState == null)
         autoConnect()
 
-        val welcomeChips = findViewById<ChipGroup>(R.id.welcomeChips)
+        val welcomeChips = binding.welcomeChips
         listOf(
             R.string.welcome_suggest_1,
             R.string.welcome_suggest_2,
@@ -173,17 +256,40 @@ class ChatActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            AgentHolder.connectionState.collect { connected ->
-                findViewById<TextView>(R.id.drawerStatusDot).setTextColor(
-                    ContextCompat.getColor(
-                        this@ChatActivity,
-                        if (connected) R.color.connected else R.color.disconnected,
+            AgentHolder.hostStatus.collect { st ->
+                val colorRes = when (st) {
+                    is HostStatus.Connected -> R.color.connected
+                    is HostStatus.Connecting -> R.color.connecting
+                    is HostStatus.Reconnecting -> R.color.connecting
+                    is HostStatus.Unreachable -> R.color.unreachable
+                    is HostStatus.Idle -> R.color.disconnected
+                }
+                binding.drawerStatusDot.setTextColor(ContextCompat.getColor(this@ChatActivity, colorRes))
+                binding.drawerStatus.text =
+                    if (st is HostStatus.Unreachable) getString(R.string.status_unreachable_fmt, st.reason.take(48))
+                    else getString(
+                        when (st) {
+                            is HostStatus.Connected -> R.string.status_connected
+                            is HostStatus.Connecting -> R.string.status_connecting
+                            is HostStatus.Reconnecting -> R.string.status_reconnecting
+                            else -> R.string.status_disconnected
+                        }
                     )
-                )
-                findViewById<TextView>(R.id.drawerStatus).setText(
-                    if (connected) R.string.status_connected else R.string.status_disconnected
-                )
-                if (connected) refreshHostAi()
+                updateToolbarProgress()
+                if (st is HostStatus.Connected) refreshHostAi()
+            }
+        }
+
+        lifecycleScope.launch {
+            AgentHolder.micStreaming.collect { streaming ->
+                val listeningView = binding.listening
+                if (streaming) {
+                    listeningView.setText(R.string.mic_host_listening)
+                    listeningView.visibility = View.VISIBLE
+                } else if (!recorder.isRecording() && !sttPending) {
+                    listeningView.visibility = View.GONE
+                }
+                updateComposerButtons()
             }
         }
 
@@ -195,8 +301,21 @@ class ChatActivity : AppCompatActivity() {
                 adapter.setSpeaking(null)
             }
         }
+        engine.onInitFailed = {
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                snack(R.string.tts_unavailable)
+            }
+        }
         tts = engine
-        findViewById<ImageButton>(R.id.ttsStop).setOnClickListener { stopSpeaking() }
+        binding.ttsStop.setOnClickListener { stopSpeaking() }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // App entry gate: fingerprint/device credential on cold start AND
+        // after >= configured minutes in background (auto-relock).
+        applyBiometricGate()
     }
 
     override fun onResume() {
@@ -204,6 +323,9 @@ class ChatActivity : AppCompatActivity() {
         val current = ProfileStore.active(this)
         if (current?.id != profile?.id) {
             profile = current
+            // Different host — its chats have nothing to do with the query.
+            searchQuery = ""
+            binding.drawerSearch.setText("")
             loadChat(null)
         }
         refreshModelChip()
@@ -212,6 +334,39 @@ class ChatActivity : AppCompatActivity() {
         refreshChatList()
         updateWelcome()
         autoConnect()
+    }
+
+    /** R-18: rotation recreates the activity — keep the open chat + draft. */
+    private fun restoreState(state: Bundle?) {
+        state?.getString(STATE_CHAT_ID)?.let { chatId ->
+            profile?.let { p -> ChatStore.load(this, p.id, chatId) }?.let { loadChat(it) }
+        }
+        state?.getString(STATE_DRAFT)?.let { draft ->
+            binding.input.setText(draft)
+            binding.input.setSelection(draft.length)
+        }
+        state?.getString(STATE_SEARCH)?.let { query ->
+            // setText fires the watcher → refreshChatList() with the query.
+            binding.drawerSearch.setText(query)
+            binding.drawerSearch.setSelection(query.length)
+        }
+    }
+
+    /** Share-into-app: text shared from other apps lands in the composer.
+     *  Cold start only — a recreated activity must keep its restored draft. */
+    private fun applySharedText(coldStart: Boolean) {
+        if (!coldStart || intent?.action != Intent.ACTION_SEND) return
+        val shared = intent.getStringExtra(Intent.EXTRA_TEXT)?.trim().orEmpty()
+        if (shared.isEmpty()) return
+        binding.input.setText(shared)
+        binding.input.setSelection(shared.length)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_DRAFT, binding.input.text?.toString())
+        if (chat.messages.isNotEmpty()) outState.putString(STATE_CHAT_ID, chat.id)
+        if (searchQuery.isNotBlank()) outState.putString(STATE_SEARCH, searchQuery)
     }
 
     override fun onDestroy() {
@@ -223,12 +378,18 @@ class ChatActivity : AppCompatActivity() {
             recorder.stop()
         }
         sttPending = false
+        if (AgentHolder.micStreaming.value) {
+            // Leaving the chat ends the user's explicit streaming context.
+            Thread({ AgentHolder.micSession?.stopSession("chat closed") }, "mic-session-stop")
+                .apply { isDaemon = true }
+                .start()
+        }
         tts?.shutdown()
         tts = null
     }
 
     private fun refreshTitle() {
-        findViewById<MaterialToolbar>(R.id.toolbar).title =
+        binding.toolbar.title =
             chat.title.ifBlank { getString(R.string.new_chat) }
     }
 
@@ -237,13 +398,16 @@ class ChatActivity : AppCompatActivity() {
         val model = active?.effectiveModel()?.takeIf { it.isNotBlank() }
             ?: hostModels.firstOrNull { it.isDefault }?.id
             ?: ""
-        findViewById<Chip>(R.id.modelChip).text = model
-        findViewById<Chip>(R.id.modelChip).visibility =
+        binding.modelChip.text = model
+        binding.modelChip.visibility =
             if (model.isBlank()) View.GONE else View.VISIBLE
+        // R-20 (№30): make the model-switch affordance visible on the toolbar
+        // itself — the whole bar opens the picker.
+        binding.toolbar.subtitle = model.ifBlank { null }
     }
 
     private fun refreshAgentChip() {
-        val chip = findViewById<Chip>(R.id.agentChip)
+        val chip = binding.agentChip
         if (hostAgents.isEmpty()) {
             chip.visibility = View.GONE
             return
@@ -260,63 +424,219 @@ class ChatActivity : AppCompatActivity() {
     private fun refreshHostAi() {
         val agent = AgentHolder.agent ?: return
         lifecycleScope.launch {
-            val (models, agents) = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 runCatching { AiClient.listModels(agent) to AiClient.listAgents(agent) }
-                    .getOrDefault(emptyList<AiModel>() to emptyList<AiAgent>())
             }
-            if (models.isNotEmpty()) hostModels = models
-            if (agents.isNotEmpty()) hostAgents = agents
-            refreshModelChip()
-            refreshAgentChip()
+            result.onSuccess { (models, agents) ->
+                if (models.isNotEmpty()) hostModels = models
+                if (agents.isNotEmpty()) hostAgents = agents
+                refreshModelChip()
+                refreshAgentChip()
+            }.onFailure { e ->
+                // R-24: silent getOrDefault left the user staring at stale/empty
+                // lists with no hint why.
+                Snackbar.make(
+                    findViewById(android.R.id.content),
+                    getString(R.string.host_ai_unavailable, e.message ?: ""),
+                    Snackbar.LENGTH_LONG,
+                ).setAction(R.string.retry) { refreshHostAi() }.show()
+            }
         }
     }
 
     private fun updateHostState() {
         val hasProfile = profile != null
-        findViewById<LinearLayout>(R.id.emptyState).visibility =
+        binding.emptyState.visibility =
             if (hasProfile) View.GONE else View.VISIBLE
-        findViewById<View>(R.id.composerCard).visibility =
+        binding.composerCard.visibility =
             if (hasProfile) View.VISIBLE else View.GONE
         if (!hasProfile) {
-            findViewById<TextView>(R.id.typing).visibility = View.GONE
-            findViewById<TextView>(R.id.listening).visibility = View.GONE
+            binding.typing.visibility = View.GONE
+            binding.listening.visibility = View.GONE
         }
     }
 
     private fun refreshChatList() {
         val active = profile
-        findViewById<TextView>(R.id.drawerProfileName).text =
+        binding.drawerProfileName.text =
             if (active == null) getString(R.string.no_profile)
             else active.name.ifBlank { getString(R.string.unnamed_profile) }
-        drawerAdapter.submit(
+        renderProjectChips()
+        val query = searchQuery.trim()
+        val all = if (active == null || query.isEmpty()) {
             if (active == null) emptyList() else ChatStore.list(this, active.id)
+        } else {
+            ChatStore.search(this, active.id, query)
+        }
+        val filtered = selectedProjectId?.let { id -> all.filter { it.projectId == id } } ?: all
+        binding.searchEmpty.visibility =
+            if (query.isNotEmpty() && filtered.isEmpty()) View.VISIBLE else View.GONE
+        drawerAdapter.submit(filtered, query = query.ifEmpty { null })
+    }
+
+    // ------------------------------------------------------------- projects
+
+    /** null = All chats (no project filter). */
+    private var selectedProjectId: String? = null
+
+    /** Drawer chat-search text; blank = search off (plain list). */
+    private var searchQuery: String = ""
+
+    private fun renderProjectChips() {
+        val active = profile
+        val projects = if (active == null) emptyList() else ProjectStore.list(this, active.id)
+        // Drop the selection if its project was deleted.
+        if (selectedProjectId != null && projects.none { it.id == selectedProjectId }) {
+            selectedProjectId = null
+        }
+        val group = binding.projectChips
+        group.removeAllViews()
+        fun chip(label: String, checked: Boolean, onClick: () -> Unit): Chip {
+            val c = Chip(
+                ContextThemeWrapper(
+                    this,
+                    com.google.android.material.R.style.Widget_Material3_Chip_Filter,
+                )
+            )
+            c.text = label
+            c.isCheckable = true
+            c.isChecked = checked
+            c.setOnClickListener { onClick() }
+            c.setOnLongClickListener { onChipLongPress(label, onClick); true }
+            return c
+        }
+        group.addView(
+            chip(getString(R.string.all_chats), selectedProjectId == null) {
+                selectedProjectId = null
+                refreshChatList()
+            }
         )
+        projects.forEach { p ->
+            group.addView(
+                chip(p.name, selectedProjectId == p.id) {
+                    selectedProjectId = p.id
+                    refreshChatList()
+                }
+            )
+        }
+    }
+
+    private fun onChipLongPress(label: String, reselect: () -> Unit) {
+        val active = profile ?: return
+        val project = ProjectStore.list(this, active.id).firstOrNull { it.name == label } ?: return
+        val options = arrayOf(getString(R.string.rename_chat), getString(R.string.delete_chat))
+        MaterialAlertDialogBuilder(this)
+            .setTitle(project.name)
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> {
+                        val input = EditText(this)
+                        input.hint = getString(R.string.project_name_hint)
+                        input.setText(project.name)
+                        val holder = FrameLayout(this)
+                        val pad = (24 * resources.displayMetrics.density).toInt()
+                        holder.setPadding(pad, pad, pad, 0)
+                        holder.addView(input)
+                        MaterialAlertDialogBuilder(this)
+                            .setTitle(R.string.rename_project)
+                            .setView(holder)
+                            .setPositiveButton(android.R.string.ok) { _, _ ->
+                                val name = input.text.toString().trim()
+                                if (name.isNotBlank()) {
+                                    ProjectStore.rename(this, active.id, project.id, name)
+                                    refreshChatList()
+                                }
+                            }
+                            .setNegativeButton(R.string.cancel, null)
+                            .show()
+                    }
+                    1 -> MaterialAlertDialogBuilder(this)
+                        .setTitle(R.string.delete_project)
+                        .setMessage(R.string.delete_project_confirm)
+                        .setPositiveButton(R.string.delete_chat) { _, _ ->
+                            ProjectStore.delete(this, active.id, project.id)
+                            ChatStore.clearProject(this, active.id, project.id)
+                            selectedProjectId = null
+                            refreshChatList()
+                            refreshTitle()
+                        }
+                        .setNegativeButton(R.string.cancel, null)
+                        .show()
+                }
+            }
+            .show()
+        reselect()
+    }
+
+    private fun showNewProjectDialog() {
+        val active = profile ?: return
+        val input = EditText(this)
+        input.hint = getString(R.string.project_name_hint)
+        input.inputType = android.text.InputType.TYPE_CLASS_TEXT
+        val holder = FrameLayout(this)
+        val pad = (24 * resources.displayMetrics.density).toInt()
+        holder.setPadding(pad, pad, pad, 0)
+        holder.addView(input)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.new_project)
+            .setView(holder)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotBlank()) {
+                    ProjectStore.save(this, active.id, Project(name = name))
+                    selectedProjectId = ProjectStore.list(this, active.id)
+                        .firstOrNull { it.name == name }?.id
+                    refreshChatList()
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun updateWelcome() {
         val show = profile != null && chat.messages.isEmpty()
-        findViewById<View>(R.id.welcomeState).visibility = if (show) View.VISIBLE else View.GONE
+        binding.welcomeState.visibility = if (show) View.VISIBLE else View.GONE
     }
 
     /** Tries to reach the last active host as soon as the app opens. */
     private fun autoConnect() {
         if (profile != null && AgentHolder.agent == null) {
-            requestPermissions()
+            startServiceAfterPermissions()
+        }
+    }
+
+    /**
+     * R-10: the service starts only after the permission dialog has been
+     * resolved (not fire-and-forget alongside it). Providers re-check grants
+     * per call, so a partially-granted set degrades gracefully.
+     */
+    private fun startServiceAfterPermissions() {
+        val missing = MainActivity.PERMISSIONS.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            AgentService.start(this)
+            return
+        }
+        pendingServiceStart = true
+        ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_PERMS)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CODE_PERMS && pendingServiceStart) {
+            pendingServiceStart = false
             AgentService.start(this)
         }
     }
 
-    private fun requestPermissions() {
-        val missing = MainActivity.PERMISSIONS.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missing.toTypedArray(), 42)
-        }
-    }
-
     private fun loadChat(loaded: Chat?) {
-        chat = loaded ?: Chat()
+        // A fresh chat lands in the currently selected project (if any).
+        chat = loaded ?: Chat(projectId = selectedProjectId.orEmpty())
         adapter.submit(chat.messages)
         refreshTitle()
         updateWelcome()
@@ -325,17 +645,70 @@ class ChatActivity : AppCompatActivity() {
 
     private fun showChatMenu(target: Chat) {
         val options = arrayOf(
+            getString(if (target.pinned) R.string.unpin_chat else R.string.pin_chat),
             getString(R.string.rename_chat),
+            getString(R.string.move_to_project),
+            getString(R.string.export_chat),
             getString(R.string.delete_chat),
         )
         MaterialAlertDialogBuilder(this)
             .setTitle(target.title.ifBlank { getString(R.string.new_chat) })
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> renameChat(target)
-                    1 -> confirmDelete(target)
+                    0 -> {
+                        profile?.let {
+                            ChatStore.setPinned(this, it.id, target.id, !target.pinned)
+                        }
+                        refreshChatList()
+                    }
+                    1 -> renameChat(target)
+                    2 -> moveToProjectDialog(target)
+                    3 -> exportChat(target)
+                    4 -> confirmDelete(target)
                 }
             }
+            .show()
+    }
+
+    private fun exportChat(target: Chat) {
+        val title = target.title.ifBlank { getString(R.string.new_chat) }
+        val markdown = buildString {
+            append("# ").appendLine(title)
+            target.messages.forEach { message ->
+                appendLine()
+                val who = when (message.role) {
+                    "user" -> getString(R.string.export_role_user)
+                    "error" -> getString(R.string.export_role_error)
+                    else -> getString(R.string.export_role_ai)
+                }
+                appendLine("**$who:**")
+                appendLine()
+                appendLine(message.content)
+            }
+        }
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            putExtra(Intent.EXTRA_TEXT, markdown)
+        }
+        startActivity(Intent.createChooser(send, getString(R.string.export_chat)))
+    }
+
+    private fun moveToProjectDialog(target: Chat) {
+        val active = profile ?: return
+        val projects = ProjectStore.list(this, active.id)
+        val labels = mutableListOf(getString(R.string.no_project_item))
+        labels.addAll(projects.map { it.name })
+        val ids = mutableListOf<String?>(null)
+        ids.addAll(projects.map { it.id })
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.move_to_project)
+            .setItems(labels.toTypedArray()) { _, which ->
+                ChatStore.moveToProject(this, active.id, target.id, ids[which])
+                if (target.id == chat.id) chat = chat.copy(projectId = ids[which].orEmpty())
+                refreshChatList()
+            }
+            .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
@@ -355,7 +728,7 @@ class ChatActivity : AppCompatActivity() {
                 val title = input.text.toString().trim()
                 profile?.let { ChatStore.rename(this, it.id, target.id, title) }
                 if (target.id == chat.id) {
-                    chat.title = title
+                    chat = chat.copy(title = title)
                     refreshTitle()
                 }
                 refreshChatList()
@@ -400,7 +773,9 @@ class ChatActivity : AppCompatActivity() {
 
         appendMessage(ChatMessage("user", text))
         if (chat.title.isBlank()) {
-            ChatStore.autoTitle(chat)
+            chat = ChatStore.autoTitle(chat)
+            profile?.let { ChatStore.save(this, it.id, chat) }
+            refreshChatList()
             refreshTitle()
         }
 
@@ -408,7 +783,11 @@ class ChatActivity : AppCompatActivity() {
         setBusyUi(true)
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { AiClient.chat(agent, active, chat.messages.map { it.role to it.content }) }
+                // R-05: send a bounded history window — a long chat must not
+                // blow the frame payload budget with every message.
+                val context = chat.messages.takeLast(HISTORY_WINDOW)
+                    .map { it.role to it.content }
+                runCatching { AiClient.chat(agent, active, context) }
             }
             result.onSuccess { reply ->
                 appendMessage(ChatMessage("assistant", reply.content))
@@ -425,26 +804,59 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun appendMessage(message: ChatMessage) {
-        chat.messages.add(message)
+        val updated = chat.copy(
+            messages = chat.messages + message,
+            updatedAt = System.currentTimeMillis(),
+        )
+        chat = updated
         adapter.append(message)
-        chat.updatedAt = System.currentTimeMillis()
-        profile?.let { ChatStore.save(this, it.id, chat) }
+        profile?.let { ChatStore.save(this, it.id, updated) }
         updateWelcome()
         refreshChatList()
     }
 
     private fun setBusyUi(b: Boolean) {
-        findViewById<MaterialButton>(R.id.send).isEnabled = !b
-        findViewById<TextView>(R.id.typing).visibility = if (b) View.VISIBLE else View.GONE
+        binding.typing.visibility = if (b) View.VISIBLE else View.GONE
+        updateToolbarProgress()
+        updateComposerButtons()
     }
 
+    /** R-14: one bar covers both long operations — AI request and connecting. */
+    private fun updateToolbarProgress() {
+        val connecting = AgentHolder.agent != null && !AgentHolder.connectionState.value
+        binding.toolbarProgress.visibility =
+            if (busy || connecting) View.VISIBLE else View.GONE
+    }
+
+    private fun updateScrollDownButton() {
+        val lm = binding.messages.layoutManager as? LinearLayoutManager
+        val last = lm?.findLastVisibleItemPosition() ?: RecyclerView.NO_POSITION
+        binding.scrollDown.visibility =
+            if (adapter.itemCount > 0 && last != RecyclerView.NO_POSITION &&
+                last < adapter.itemCount - 1
+            ) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * Single composer action (ui-reference: send swaps with mic in one slot).
+     * Text present and idle → filled send; otherwise mic (red while listening).
+     */
     private fun updateComposerButtons() {
-        val hasText = findViewById<EditText>(R.id.input).text?.isNotBlank() == true
-        val dictating = recorder.isRecording() || sttPending
-        findViewById<MaterialButton>(R.id.send).visibility =
-            if (hasText && !dictating) View.VISIBLE else View.GONE
-        findViewById<MaterialButton>(R.id.mic).visibility =
-            if (dictating || !hasText) View.VISIBLE else View.GONE
+        val hasText = binding.input.text?.isNotBlank() == true
+        val dictating = recorder.isRecording() || sttPending || AgentHolder.micStreaming.value
+        val action = binding.composerAction
+        if (hasText && !dictating) {
+            action.setIconResource(R.drawable.ic_send)
+            action.setIconTintResource(R.color.on_primary)
+            action.backgroundTintList =
+                android.content.res.ColorStateList.valueOf(ContextCompat.getColor(this, R.color.primary))
+            action.contentDescription = getString(R.string.send_button)
+        } else {
+            action.setIconResource(R.drawable.ic_mic)
+            action.setIconTintResource(if (dictating) R.color.error else R.color.primary)
+            action.backgroundTintList = null
+            action.contentDescription = getString(R.string.mic_button)
+        }
     }
 
     // ----------------------------------------------------- model switcher
@@ -486,8 +898,9 @@ class ChatActivity : AppCompatActivity() {
 
     private fun saveAgent(agentId: String) {
         val active = profile ?: return
-        profile = active.copy(aiAgent = agentId)
-        ProfileStore.save(this, profile!!)
+        val updated = active.copy(aiAgent = agentId)
+        profile = updated
+        ProfileStore.save(this, updated)
         refreshAgentChip()
         Toast.makeText(this, getString(R.string.agent_switched, agentName(agentId)), Toast.LENGTH_SHORT).show()
     }
@@ -518,8 +931,9 @@ class ChatActivity : AppCompatActivity() {
     private fun saveModel(modelId: String) {
         if (modelId.isBlank()) return
         val active = profile ?: return
-        profile = active.copy(aiModel = modelId)
-        ProfileStore.save(this, profile!!)
+        val updated = active.copy(aiModel = modelId)
+        profile = updated
+        ProfileStore.save(this, updated)
         refreshModelChip()
         Toast.makeText(this, getString(R.string.model_switched, modelId), Toast.LENGTH_SHORT).show()
     }
@@ -565,15 +979,11 @@ class ChatActivity : AppCompatActivity() {
 
     private fun forkBranchAt(message: ChatMessage) {
         val active = profile ?: return
-        val idx = chat.messages.indexOfFirst {
-            it.timestamp == message.timestamp &&
-                it.role == message.role &&
-                it.content == message.content
-        }
+        val idx = chat.messages.indexOfFirst { it.id == message.id }
         if (idx < 0) return
-        val branch = Chat()
-        branch.messages.addAll(chat.messages.subList(0, idx + 1))
-        ChatStore.autoTitle(branch)
+        val branch = ChatStore.autoTitle(
+            Chat(messages = chat.messages.take(idx + 1)),
+        )
         ChatStore.save(this, active.id, branch)
         loadChat(branch)
         Toast.makeText(this, R.string.fork_created, Toast.LENGTH_SHORT).show()
@@ -587,11 +997,15 @@ class ChatActivity : AppCompatActivity() {
 
     private fun toggleSpeak(message: ChatMessage) {
         val engine = tts ?: return
+        if (!engine.isReady()) {
+            snack(R.string.tts_unavailable)
+            return
+        }
         if (engine.isSpeaking()) {
             stopSpeaking()
         } else {
             engine.speak(message.content)
-            findViewById<View>(R.id.ttsPill).visibility = View.VISIBLE
+            binding.ttsPill.visibility = View.VISIBLE
             adapter.setSpeaking(message)
         }
     }
@@ -603,10 +1017,41 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun hideTtsPill() {
-        findViewById<View>(R.id.ttsPill).visibility = View.GONE
+        binding.ttsPill.visibility = View.GONE
     }
 
     // ------------------------------------------------------------- dictation
+
+    /**
+     * Long-press mic: explicit host-stream session (R-01). The mic leaves the
+     * phone only while this session is live; teardown joins a reader thread,
+     * so it runs off the main thread.
+     */
+    private fun toggleHostStream() {
+        val controller = AgentHolder.micSession
+        if (controller == null || AgentHolder.agent == null || !AgentHolder.connectionState.value) {
+            snack(R.string.not_connected)
+            return
+        }
+        if (AgentHolder.micStreaming.value) {
+            lifecycleScope.launch(Dispatchers.Default) { controller.stopSession("user") }
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingHostStream = true
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        lifecycleScope.launch(Dispatchers.Default) {
+            val started = controller.startSession(applicationContext, source = "chat-ui")
+            runOnUiThread {
+                if (started) snack(R.string.mic_host_started)
+                else snack(R.string.mic_start_failed)
+            }
+        }
+    }
 
     private fun toggleDictation(input: EditText) {
         if (recorder.isRecording()) {
@@ -644,7 +1089,7 @@ class ChatActivity : AppCompatActivity() {
                 } else {
                     sttPending = false
                     setListeningUi(false)
-                    Toast.makeText(this, R.string.stt_not_ready, Toast.LENGTH_SHORT).show()
+                    snack(R.string.stt_not_ready)
                 }
             }
         }
@@ -655,24 +1100,31 @@ class ChatActivity : AppCompatActivity() {
         if (session == null) {
             sttPending = false
             setListeningUi(false)
-            Toast.makeText(this, R.string.stt_not_ready, Toast.LENGTH_SHORT).show()
+            snack(R.string.stt_not_ready)
             return
         }
         sttSession = session
-        val input = findViewById<EditText>(R.id.input)
+        val input = binding.input
         val editable = input.text?.toString().orEmpty()
         sttDraftPrefix = editable.substring(0, input.selectionStart.coerceIn(0, editable.length))
+        lastGeneratedDraft = null
         recorder.start(onChunk = ::onSttChunk)
         if (!recorder.isRecording()) {
             sttSession = null
             sttPending = false
             setListeningUi(false)
-            Toast.makeText(this, R.string.mic_start_failed, Toast.LENGTH_SHORT).show()
+            snack(R.string.mic_start_failed)
             return
         }
         partialJob = lifecycleScope.launch {
+            val startedAt = SystemClock.elapsedRealtime()
             while (isActive && sttSession != null) {
                 delay(PARTIAL_INTERVAL_MS)
+                if (SystemClock.elapsedRealtime() - startedAt >= MAX_DICTATION_MS) {
+                    stopDictation(input)
+                    snack(R.string.mic_session_limit, Snackbar.LENGTH_LONG)
+                    break
+                }
                 val current = sttSession ?: break
                 val text = withContext(Dispatchers.IO) {
                     SttEngine.get(this@ChatActivity).partial(current)
@@ -710,25 +1162,46 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
-    /** Live draft: prefix (text before the cursor at dictation start) + partial. */
+    /** Live draft: prefix (text before the cursor at dictation start) + partial.
+     *  R-24: text the user typed since the last generated draft is preserved
+     *  and re-appended, not silently overwritten. */
     private fun updateDraft(text: String) {
-        val input = findViewById<EditText>(R.id.input)
-        input.setText(sttDraftPrefix + text)
-        input.setSelection(input.text?.length ?: 0)
+        val input = binding.input
+        val current = input.text?.toString().orEmpty()
+        val generated = sttDraftPrefix + text
+        val updated = if (lastGeneratedDraft != null && current != lastGeneratedDraft) {
+            val userTail = if (current.startsWith(lastGeneratedDraft!!)) {
+                current.substring(lastGeneratedDraft!!.length)
+            } else {
+                ""
+            }
+            generated + userTail
+        } else {
+            generated
+        }
+        input.setText(updated)
+        input.setSelection(updated.length)
+        lastGeneratedDraft = updated
     }
 
     private fun setListeningUi(listening: Boolean) {
-        findViewById<TextView>(R.id.listening).visibility = if (listening) View.VISIBLE else View.GONE
-        findViewById<MaterialButton>(R.id.mic).setIconTintResource(
-            if (listening) R.color.error else R.color.primary,
-        )
+        binding.listening.visibility = if (listening) View.VISIBLE else View.GONE
         updateComposerButtons()
     }
 
     companion object {
-        const val EXTRA_CHAT_ID = "chat_id"
+        private const val REQUEST_CODE_PERMS = 42
+        private const val STATE_DRAFT = "state_draft"
+        private const val STATE_CHAT_ID = "state_chat_id"
+        private const val STATE_SEARCH = "state_search"
 
         /** How often the offline recognizer re-decodes the accumulated audio. */
         private const val PARTIAL_INTERVAL_MS = 1000L
+
+        /** Hard cap on one local dictation session (R-11 memory fuse). */
+        private const val MAX_DICTATION_MS = 5 * 60_000L
+
+        /** History window sent to the host AI per message (R-05 payload budget). */
+        private const val HISTORY_WINDOW = 20
     }
 }

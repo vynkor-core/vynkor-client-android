@@ -3,52 +3,57 @@ package dev.vynkor.agent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageButton
-import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import dev.vynkor.agent.agent.HostProfile
+import dev.vynkor.agent.databinding.ItemProfileBinding
 
+/**
+ * R-16/R-31: DiffUtil-driven host profiles list with ViewBinding. The active
+ * badge is part of the payload so switching profiles rebinds only two rows.
+ */
 class ProfileAdapter(
     private val onSelect: (HostProfile) -> Unit,
     private val onEdit: (HostProfile) -> Unit,
     private val onDelete: (HostProfile) -> Unit,
-) : RecyclerView.Adapter<ProfileAdapter.Holder>() {
+) : ListAdapter<HostProfile, ProfileAdapter.Holder>(DIFF) {
 
-    private var items: List<HostProfile> = emptyList()
     private var activeId: String? = null
 
     fun submit(list: List<HostProfile>, activeId: String?) {
-        items = list
         this.activeId = activeId
-        notifyDataSetChanged()
+        submitList(list)
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
-        val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_profile, parent, false)
-        return Holder(view)
-    }
-
-    override fun getItemCount(): Int = items.size
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder =
+        Holder(ItemProfileBinding.inflate(LayoutInflater.from(parent.context), parent, false))
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.bind(items[position])
+        holder.bind(getItem(position), getItem(position).id == activeId)
     }
 
-    inner class Holder(view: View) : RecyclerView.ViewHolder(view) {
-        private val name: TextView = view.findViewById(R.id.profileName)
-        private val host: TextView = view.findViewById(R.id.profileHost)
-        private val active: TextView = view.findViewById(R.id.profileActive)
-        private val edit: ImageButton = view.findViewById(R.id.profileEdit)
-        private val delete: ImageButton = view.findViewById(R.id.profileDelete)
+    inner class Holder(private val binding: ItemProfileBinding) :
+        RecyclerView.ViewHolder(binding.root) {
 
-        fun bind(profile: HostProfile) {
-            name.text = profile.name.ifBlank { name.context.getString(R.string.unnamed_profile) }
-            host.text = profile.hostUrl
-            active.visibility = if (profile.id == activeId) View.VISIBLE else View.GONE
-            edit.setOnClickListener { onEdit(profile) }
-            delete.setOnClickListener { onDelete(profile) }
+        fun bind(profile: HostProfile, isActive: Boolean) {
+            binding.profileName.text =
+                profile.name.ifBlank { binding.root.context.getString(R.string.unnamed_profile) }
+            binding.profileHost.text = profile.hostUrl
+            binding.profileActive.visibility = if (isActive) View.VISIBLE else View.GONE
+            binding.profileEdit.setOnClickListener { onEdit(profile) }
+            binding.profileDelete.setOnClickListener { onDelete(profile) }
             itemView.setOnClickListener { onSelect(profile) }
+        }
+    }
+
+    companion object {
+        private val DIFF = object : DiffUtil.ItemCallback<HostProfile>() {
+            override fun areItemsTheSame(oldItem: HostProfile, newItem: HostProfile) =
+                oldItem.id == newItem.id
+
+            override fun areContentsTheSame(oldItem: HostProfile, newItem: HostProfile) =
+                oldItem == newItem
         }
     }
 }

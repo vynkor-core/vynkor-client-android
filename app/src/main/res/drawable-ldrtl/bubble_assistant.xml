@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RTL variant of ../drawable/bubble_assistant.xml: the 4dp tail flips to
+     the bottom-right because the bubble itself mirrors to the right side. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface_bubble" />
+    <corners
+        android:topLeftRadius="16dp"
+        android:topRightRadius="16dp"
+        android:bottomRightRadius="4dp"
+        android:bottomLeftRadius="16dp" />
+</shape>

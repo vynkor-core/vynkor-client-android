@@ -2,8 +2,10 @@ package dev.vynkor.agent
 
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.textfield.TextInputEditText
+import dev.vynkor.agent.databinding.ActivityProfileBinding
 import dev.vynkor.agent.agent.DeviceIdentity
 import dev.vynkor.agent.agent.HostProfile
 import dev.vynkor.agent.agent.ProfileStore
@@ -11,17 +13,21 @@ import dev.vynkor.agent.agent.ProfileStore
 class ProfileActivity : AppCompatActivity() {
 
     private var editing: HostProfile? = null
+    private lateinit var binding: ActivityProfileBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_profile)
+        enableEdgeToEdge()
+        binding = ActivityProfileBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        applyInsetPadding()
 
-        val name = findViewById<TextInputEditText>(R.id.name)
-        val hostUrl = findViewById<TextInputEditText>(R.id.hostUrl)
-        val deviceId = findViewById<TextInputEditText>(R.id.deviceId)
-        val userId = findViewById<TextInputEditText>(R.id.userId)
-        val jwt = findViewById<TextInputEditText>(R.id.jwt)
-        val secret = findViewById<TextInputEditText>(R.id.secret)
+        val name = binding.name
+        val hostUrl = binding.hostUrl
+        val deviceId = binding.deviceId
+        val userId = binding.userId
+        val jwt = binding.jwt
+        val secret = binding.secret
 
         val id = intent.getStringExtra(EXTRA_PROFILE_ID)
         editing = id?.let { ProfileStore.get(this, it) }
@@ -38,7 +44,7 @@ class ProfileActivity : AppCompatActivity() {
             userId.setText("default")
         }
 
-        findViewById<android.widget.Button>(R.id.save).setOnClickListener {
+        binding.save.setOnClickListener {
             val profile = HostProfile(
                 id = editing?.id ?: java.util.UUID.randomUUID().toString(),
                 name = name.text?.toString()?.trim().orEmpty(),
@@ -58,7 +64,7 @@ class ProfileActivity : AppCompatActivity() {
                 aiAgent = editing?.aiAgent.orEmpty(),
             )
             if (profile.hostUrl.isBlank()) {
-                Toast.makeText(this, R.string.host_url_required, Toast.LENGTH_SHORT).show()
+                snack(R.string.host_url_required)
                 return@setOnClickListener
             }
             DeviceIdentity.setDeviceId(this, profile.deviceId)

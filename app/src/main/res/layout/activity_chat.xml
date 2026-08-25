@@ -20,6 +20,15 @@
             app:title="@string/new_chat"
             app:titleTextColor="?attr/colorOnSurface" />
 
+        <!-- R-14 (№23): visible progress for the AI request / connection —
+             "Typing…" alone reads as stalled. -->
+        <com.google.android.material.progressindicator.LinearProgressIndicator
+            android:id="@+id/toolbarProgress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:indeterminate="true"
+            android:visibility="gone" />
+
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -117,6 +126,21 @@
                     android:gravity="center" />
             </LinearLayout>
 
+            <!-- Jump back to the newest message when scrolled up. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/scrollDown"
+                style="@style/Widget.Material3.Button.IconButton.Filled"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="bottom|end"
+                android:layout_marginEnd="16dp"
+                android:contentDescription="@string/scroll_to_bottom"
+                android:visibility="gone"
+                app:backgroundTint="?attr/colorSurfaceContainerHigh"
+                app:icon="@drawable/ic_arrow_down"
+                app:iconGravity="textStart"
+                app:iconTint="?attr/colorOnSurface" />
+
             <!-- Floating TTS playback pill: visible while read-aloud runs. -->
             <com.google.android.material.card.MaterialCardView
                 android:id="@+id/ttsPill"
@@ -128,7 +152,6 @@
                 app:cardBackgroundColor="?attr/colorSurfaceContainerHigh"
                 app:cardCornerRadius="20dp"
                 app:cardElevation="4dp">
-
                 <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -213,42 +236,23 @@
                 android:paddingEnd="6dp"
                 android:paddingBottom="8dp">
 
-                <!-- Input + send row (send appears when text is present). -->
-                <LinearLayout
+                <!-- Input row: the action button (mic ↔ send) lives in the
+                     bottom row, right slot — same position, icon swaps. -->
+                <EditText
+                    android:id="@+id/input"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="bottom"
-                    android:orientation="horizontal">
+                    android:background="@null"
+                    android:hint="@string/chat_input_hint"
+                    android:inputType="textCapSentences|textMultiLine"
+                    android:maxLines="5"
+                    android:minHeight="46dp"
+                    android:paddingTop="12dp"
+                    android:paddingBottom="4dp"
+                    android:scrollbars="vertical"
+                    android:textAppearance="?attr/textAppearanceBodyLarge" />
 
-                    <EditText
-                        android:id="@+id/input"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:background="@null"
-                        android:hint="@string/chat_input_hint"
-                        android:inputType="textCapSentences|textMultiLine"
-                        android:maxLines="5"
-                        android:minHeight="46dp"
-                        android:paddingTop="12dp"
-                        android:paddingBottom="4dp"
-                        android:scrollbars="vertical"
-                        android:textAppearance="?attr/textAppearanceBodyLarge" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/send"
-                        style="@style/Widget.Material3.Button.IconButton.Filled"
-                        android:layout_width="40dp"
-                        android:layout_height="40dp"
-                        android:layout_marginStart="4dp"
-                        android:layout_marginBottom="4dp"
-                        android:contentDescription="@string/send_button"
-                        android:visibility="gone"
-                        app:icon="@drawable/ic_send"
-                        app:iconTint="?attr/colorOnPrimary" />
-                </LinearLayout>
-
-                <!-- Model chip + mic row. -->
+                <!-- Model chip + action row. -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -279,19 +283,21 @@
                         android:layout_weight="1" />
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/mic"
-                        style="@style/Widget.Material3.Button.IconButton"
+                        android:id="@+id/composerAction"
+                        style="@style/Widget.Material3.Button.IconButton.Filled"
                         android:layout_width="40dp"
                         android:layout_height="40dp"
                         android:contentDescription="@string/mic_button"
                         app:icon="@drawable/ic_mic"
-                        app:iconTint="@color/primary" />
+                        app:iconGravity="textStart"
+                        app:iconPadding="0dp" />
                 </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
     </LinearLayout>
 
     <LinearLayout
+        android:id="@+id/drawerPanel"
         android:layout_width="300dp"
         android:layout_height="match_parent"
         android:layout_gravity="start"
@@ -304,17 +310,9 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <ImageView
-                android:layout_width="28dp"
-                android:layout_height="28dp"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_stat_vynkor"
-                app:tint="@color/primary" />
-
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
                 android:text="@string/app_name"
                 android:textAppearance="?attr/textAppearanceHeadlineSmall"
                 android:textStyle="bold" />
@@ -379,6 +377,88 @@
             android:textAppearance="?attr/textAppearanceTitleMedium"
             android:textColor="?attr/colorOnSurfaceVariant" />
 
+        <!-- Projects: filter chips (All + user projects), + to create. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginEnd="12dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/projects_title"
+                android:textAppearance="?attr/textAppearanceTitleMedium"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/addProject"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:contentDescription="@string/new_project"
+                app:icon="@drawable/ic_add"
+                app:iconTint="?attr/colorPrimary" />
+        </LinearLayout>
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="16dp"
+            android:scrollbars="none">
+
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/projectChips"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                app:chipSpacingHorizontal="6dp"
+                app:selectionRequired="true"
+                app:singleLine="true"
+                app:singleSelection="true" />
+        </HorizontalScrollView>
+
+        <!-- Search across chat titles AND message contents; filters the
+             list below in combination with the selected project chip. -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/drawerSearchLayout"
+            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginEnd="16dp"
+            android:hint="@string/search_chats_hint"
+            app:endIconContentDescription="@string/clear_search"
+            app:endIconMode="clear_text"
+            app:startIconContentDescription="@string/search_chats_hint"
+            app:startIconDrawable="@drawable/ic_search"
+            app:startIconTint="?attr/colorOnSurfaceVariant">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/drawerSearch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:maxLines="1"
+                android:textAppearance="?attr/textAppearanceBodyMedium" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView
+            android:id="@+id/searchEmpty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:padding="24dp"
+            android:text="@string/no_search_results"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="?attr/colorOnSurfaceVariant"
+            android:visibility="gone" />
+
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/drawerChats"
             android:layout_width="match_parent"
@@ -390,15 +470,24 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:gravity="end">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/lockNow"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:contentDescription="@string/lock_now"
+                app:icon="@drawable/ic_lock"
+                app:iconTint="?attr/colorOnSurfaceVariant" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/settings"
                 style="@style/Widget.Material3.Button.IconButton"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
-                android:layout_gravity="end"
                 android:contentDescription="@string/settings_title"
                 app:icon="@drawable/ic_settings"
                 app:iconTint="?attr/colorPrimary" />

@@ -1,0 +1,176 @@
+package dev.vynkor.agent
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import dev.vynkor.agent.agent.AgentHolder
+import dev.vynkor.agent.agent.AgentService
+import dev.vynkor.agent.agent.DeviceIdentity
+import dev.vynkor.agent.agent.HostProfile
+import dev.vynkor.agent.agent.PairingPayload
+import dev.vynkor.agent.agent.ProfileStore
+import dev.vynkor.agent.databinding.ActivityHostsBinding
+
+/**
+ * Hosts management: the profile list, QR pairing and manual add/edit.
+ * Split out of Settings so Settings stays a clean section list (ui-reference).
+ */
+class HostsActivity : AppCompatActivity() {
+
+    private lateinit var adapter: ProfileAdapter
+    private lateinit var binding: ActivityHostsBinding
+    private var pendingServiceStart = false
+
+    private val scanLauncher = registerForActivityResult(ScanContract()) { result ->
+        if (result.contents == null) {
+            Toast.makeText(this, R.string.scan_cancelled, Toast.LENGTH_SHORT).show()
+        } else {
+            onPairingPayload(result.contents!!, external = false)
+        }
+    }
+
+    private val cameraPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) launchScanner()
+            else Toast.makeText(this, R.string.camera_denied, Toast.LENGTH_LONG).show()
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        binding = ActivityHostsBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+        applyInsetPadding()
+
+        binding.back.setOnClickListener { finish() }
+        binding.scan.setOnClickListener {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                launchScanner()
+            } else {
+                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+            }
+        }
+
+        adapter = ProfileAdapter(
+            onSelect = { profile ->
+                ProfileStore.setActive(this, profile.id)
+                refresh()
+            },
+            onEdit = { profile ->
+                startActivity(
+                    Intent(this, ProfileActivity::class.java)
+                        .putExtra(ProfileActivity.EXTRA_PROFILE_ID, profile.id)
+                )
+            },
+            onDelete = { profile ->
+                ProfileStore.delete(this, profile.id)
+                refresh()
+            },
+        )
+        binding.profiles.layoutManager = LinearLayoutManager(this)
+        binding.profiles.adapter = adapter
+
+        binding.addProfile.setOnClickListener {
+            startActivity(Intent(this, ProfileActivity::class.java))
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refresh()
+    }
+
+    private fun launchScanner() {
+        scanLauncher.launch(
+            ScanOptions()
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt(getString(R.string.scan_prompt))
+        )
+    }
+
+    /**
+     * R-02: an in-app QR scan is the trusted physical channel and applies
+     * directly. Any other entry point (VIEW intent from another app) must be
+     * confirmed by the user before anything is saved or connected.
+     */
+    private fun onPairingPayload(raw: String, external: Boolean) {
+        val profile = PairingPayload.parse(raw)
+        if (profile == null) {
+            Toast.makeText(this, R.string.scan_invalid, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (!external) {
+            applyPairing(profile)
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.pair_confirm_title)
+            .setMessage(getString(R.string.pair_confirm_message, profile.hostUrl, profile.deviceId))
+            .setPositiveButton(R.string.pair_confirm_yes) { _, _ -> applyPairing(profile) }
+            .setNegativeButton(R.string.pair_confirm_no, null)
+            .show()
+    }
+
+    private fun applyPairing(profile: HostProfile) {
+        DeviceIdentity.setDeviceId(this, profile.deviceId)
+        ProfileStore.save(this, profile)
+        ProfileStore.setActive(this, profile.id)
+        refresh()
+        Toast.makeText(this, getString(R.string.paired_and_connected, profile.name), Toast.LENGTH_SHORT).show()
+        if (AgentHolder.agent == null) {
+            startServiceAfterPermissions()
+        }
+    }
+
+    /**
+     * R-10: the service starts only after the permission dialog has been
+     * resolved (not fire-and-forget alongside it).
+     */
+    private fun startServiceAfterPermissions() {
+        val missing = MainActivity.PERMISSIONS.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            AgentService.start(this)
+            return
+        }
+        pendingServiceStart = true
+        ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_PERMS)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_CODE_PERMS && pendingServiceStart) {
+            pendingServiceStart = false
+            AgentService.start(this)
+        }
+    }
+
+    private fun refresh() {
+        val active = ProfileStore.active(this)
+        adapter.submit(ProfileStore.list(this), active?.id)
+    }
+
+    companion object {
+        private const val REQUEST_CODE_PERMS = 43
+    }
+}
