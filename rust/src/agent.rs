@@ -415,8 +415,8 @@ impl Agent {
             device_id: self.config.device_id.clone(),
             cap: cap.to_string(),
             jwt_token: self.config.jwt_token.clone(),
-            jwt_secret: (!self.config.jwt_secret.is_empty())
-                .then(|| self.config.jwt_secret.clone()),
+            device_secret: (!self.config.device_secret.is_empty())
+                .then(|| self.config.device_secret.clone()),
             cert_pem: (!self.config.cert_pem.is_empty()).then(|| self.config.cert_pem.clone()),
             os_version: self.config.os_version.clone(),
             arch: self.config.arch.clone(),
@@ -843,7 +843,7 @@ mod tests {
         AgentConfig {
             host_url: "ws://127.0.0.1:9".into(),
             jwt_token: String::new(),
-            jwt_secret: String::new(),
+            device_secret: String::new(),
             cert_pem: String::new(),
             device_id: "test-device".into(),
             capabilities: Vec::new(),

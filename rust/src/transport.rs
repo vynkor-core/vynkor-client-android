@@ -37,7 +37,8 @@ pub struct RegisterParams {
     pub device_id: String,
     pub cap: String,
     pub jwt_token: String,
-    pub jwt_secret: Option<String>,
+    /// per-device secret issued by the host (E-01); None = no MAC
+    pub device_secret: Option<String>,
     /// Host's served TLS cert (PEM) to pin on `wss://` (self-signed). `None` =
     /// webpki-roots verification.
     pub cert_pem: Option<String>,
@@ -223,7 +224,7 @@ fn arm_from_ack(
     if !ack.accepted {
         return Err(AgentError::Register(ack.reject_reason));
     }
-    let key = match &params.jwt_secret {
+    let key = match &params.device_secret {
         Some(secret) if !ack.session_nonce.is_empty() => Some(derive_session_key(
             secret.as_bytes(),
             &ack.session_nonce,
@@ -318,7 +319,7 @@ mod tests {
             device_id: "phone-abc".into(),
             cap: "geo".into(),
             jwt_token: String::new(),
-            jwt_secret: None,
+            device_secret: None,
             cert_pem: None,
             os_version: "14".into(),
             arch: "aarch64".into(),

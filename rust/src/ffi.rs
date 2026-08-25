@@ -5,18 +5,19 @@
 //! data records and the foreign traits — the contract both sides compile
 //! against. No protocol logic here.
 
-/// Connection config. `jwt_secret` is the host kernel's `jwt_secret` value —
-/// needed to derive the per-session frame-MAC key (same rule as the D-06
-/// bridge). On the device it is stored only inside the app's encrypted
-/// profile store (Android Keystore, AES-GCM) and excluded from cloud backups.
+/// Connection config. `device_secret` is the per-device credential issued by
+/// the host at pair time (E-01) — never the host master `jwt_secret` — and is
+/// the frame-MAC key input. On the device it is stored only inside the app's
+/// encrypted profile store (Android Keystore, AES-GCM) and excluded from cloud
+/// backups.
 #[derive(uniffi::Record)]
 pub struct AgentConfig {
     /// Host kernel WS endpoint, e.g. `wss://host:port/ws`.
     pub host_url: String,
     /// Device JWT (`sub = device_id`, restricted claims).
     pub jwt_token: String,
-    /// Host's `jwt_secret`, for frame-MAC key derivation.
-    pub jwt_secret: String,
+    /// Per-device secret issued by the host (E-01), for frame-MAC derivation.
+    pub device_secret: String,
     /// Host's served TLS cert (PEM) to pin when `host_url` is `wss://` and the
     /// cert is self-signed. Empty = verify against webpki-roots only.
     pub cert_pem: String,
