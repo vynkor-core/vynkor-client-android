@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  R-28 decision (documented compromise): the host URL is user-supplied and
+  the primary pairing scenario is plain-WS on the LAN (ws://host:port), so
+  cleartext must remain permitted app-wide. Revisit when TLS-by-default
+  lands (epic E-01 follow-up) — then flip to cleartextTrafficPermitted=false.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- ChatActivity always opens on a fresh chat, so the plain intent is
+         enough; the action name just marks where the launch came from. -->
+    <shortcut
+        android:shortcutId="new_chat"
+        android:enabled="true"
+        android:icon="@drawable/ic_add"
+        android:shortcutShortLabel="@string/new_chat"
+        android:shortcutLongLabel="@string/new_chat">
+        <intent
+            android:action="dev.vynkor.agent.action.NEW_CHAT"
+            android:targetPackage="dev.vynkor.agent"
+            android:targetClass="dev.vynkor.agent.ChatActivity" />
+    </shortcut>
+</shortcuts>

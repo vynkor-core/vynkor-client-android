@@ -2,17 +2,26 @@ package dev.vynkor.agent.agent
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import org.json.JSONArray
 
 /**
- * Persists the set of host profiles (JSON array in SharedPreferences) plus the
- * id of the active one. Migrates the pre-multi-host single-config keys on
- * first load.
+ * Persists the set of host profiles plus the id of the active one.
+ *
+ * Storage evolution:
+ * 1. legacy single-config keys (`host_url`/`jwt_token`/`jwt_secret`);
+ * 2. plaintext JSON array under [KEY_PROFILES];
+ * 3. current: AES-GCM encrypted JSON under [KEY_PROFILES_ENC] (R-03).
+ * Each older format migrates forward on first load. A store that fails to
+ * decrypt/parse is quarantined, never silently wiped.
  */
 object ProfileStore {
+    private const val TAG = "ProfileStore"
     private const val PREFS = "vynkor_config"
     private const val KEY_PROFILES = "profiles"
+    private const val KEY_PROFILES_ENC = "profiles_enc"
     private const val KEY_ACTIVE = "active_profile"
+    private const val QUARANTINE_PREFIX = "corrupt_"
 
     private const val KEY_HOST_URL = "host_url"
     private const val KEY_JWT = "jwt_token"
@@ -59,21 +68,31 @@ object ProfileStore {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private fun load(context: Context): MutableList<HostProfile> {
-        val raw = prefs(context).getString(KEY_PROFILES, null)
-        if (raw.isNullOrBlank()) return migrateLegacy(context)
-        return try {
-            val arr = JSONArray(raw)
-            (0 until arr.length())
-                .map { HostProfile.fromJson(arr.getJSONObject(it)) }
-                .toMutableList()
-        } catch (_: Exception) {
-            mutableListOf()
+        val p = prefs(context)
+
+        p.getString(KEY_PROFILES_ENC, null)?.let { enc ->
+            val json = ProfileCrypto.decrypt(enc)
+                ?: return quarantine(p, KEY_PROFILES_ENC).toMutableList()
+            return parse(json)
+                ?: return quarantine(p, KEY_PROFILES_ENC).toMutableList()
         }
+
+        p.getString(KEY_PROFILES, null)?.let { raw ->
+            parse(raw)?.takeIf { it.isNotEmpty() }?.let { list ->
+                persist(context, list)
+                return list
+            }
+            quarantine(p, KEY_PROFILES)
+        }
+
+        migrateLegacy(context)?.let { return it }
+        return mutableListOf()
     }
 
-    private fun migrateLegacy(context: Context): MutableList<HostProfile> {
+    /** Pre-multi-host format: one profile spread over single-purpose keys. */
+    private fun migrateLegacy(context: Context): MutableList<HostProfile>? {
         val p = prefs(context)
-        val legacyUrl = p.getString(KEY_HOST_URL, null) ?: return mutableListOf()
+        val legacyUrl = p.getString(KEY_HOST_URL, null) ?: return null
         val profile = HostProfile(
             name = "Default",
             hostUrl = legacyUrl,
@@ -87,9 +106,41 @@ object ProfileStore {
         return list
     }
 
+    /**
+     * Fail-closed: when encryption is unavailable the store keeps its previous
+     * value and the change stays memory-only — plaintext secrets never land
+     * on disk.
+     */
     private fun persist(context: Context, list: List<HostProfile>) {
         val arr = JSONArray()
         list.forEach { arr.put(it.toJson()) }
-        prefs(context).edit().putString(KEY_PROFILES, arr.toString()).apply()
+        val enc = ProfileCrypto.encrypt(arr.toString())
+        if (enc == null) {
+            Log.e(TAG, "encryption unavailable; refusing to write plaintext profiles")
+            return
+        }
+        prefs(context).edit().putString(KEY_PROFILES_ENC, enc).remove(KEY_PROFILES).apply()
+    }
+
+    private fun parse(json: String): MutableList<HostProfile>? = try {
+        val arr = JSONArray(json)
+        (0 until arr.length())
+            .map { HostProfile.fromJson(arr.getJSONObject(it)) }
+            .toMutableList()
+    } catch (_: Exception) {
+        null
+    }
+
+    /** Moves an unreadable store aside so user data survives for recovery. */
+    private fun quarantine(p: SharedPreferences, key: String): List<HostProfile> {
+        val value = p.getString(key, null)
+        if (value != null) {
+            p.edit()
+                .putString("$QUARANTINE_PREFIX${System.currentTimeMillis()}_$key", value)
+                .remove(key)
+                .apply()
+        }
+        Log.w(TAG, "profile store unreadable, quarantined ($key)")
+        return emptyList()
     }
 }
