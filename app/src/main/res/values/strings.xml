@@ -53,6 +53,10 @@
     <string name="no_search_results">Nothing found</string>
     <string name="pin_chat">Pin to top</string>
     <string name="unpin_chat">Unpin</string>
+    <string name="edit_message">Edit</string>
+    <string name="delete_message">Delete</string>
+    <string name="regenerate_reply">Regenerate</string>
+    <string name="edit_message_hint">Message text</string>
     <string name="export_chat">Export chat</string>
     <string name="export_role_user">You</string>
     <string name="export_role_ai">AI</string>

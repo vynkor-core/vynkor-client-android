@@ -771,17 +771,11 @@ class ChatActivity : AppCompatActivity() {
     private fun sendMessage(input: EditText) {
         val text = input.text?.toString()?.trim().orEmpty()
         if (text.isEmpty() || busy) return
+        skipTypewriter()
         input.setText("")
 
-        val active = profile ?: return
-        val agent = AgentHolder.agent
-        if (agent == null) {
-            appendMessage(ChatMessage("error", getString(R.string.not_connected)))
-            return
-        }
-        val useAgent = active.aiAgent.isNotBlank()
-        if (!useAgent && (active.effectiveModel().isBlank() || active.aiApiKeyEnv.isBlank())) {
-            appendMessage(ChatMessage("error", getString(R.string.ai_not_configured)))
+        aiConfigErrorOrNull()?.let {
+            appendMessage(ChatMessage("error", it))
             return
         }
 
@@ -793,6 +787,26 @@ class ChatActivity : AppCompatActivity() {
             refreshChatList()
             refreshTitle()
         }
+
+        requestCompletion()
+    }
+
+    /** Null when a completion request may go out, error text otherwise. */
+    private fun aiConfigErrorOrNull(): String? {
+        val active = profile ?: return getString(R.string.not_connected)
+        if (AgentHolder.agent == null) return getString(R.string.not_connected)
+        val useAgent = active.aiAgent.isNotBlank()
+        return if (!useAgent && (active.effectiveModel().isBlank() || active.aiApiKeyEnv.isBlank())) {
+            getString(R.string.ai_not_configured)
+        } else {
+            null
+        }
+    }
+
+    private fun requestCompletion() {
+        if (busy) return
+        val active = profile ?: return
+        val agent = AgentHolder.agent ?: return
 
         busy = true
         setBusyUi(true)
@@ -830,6 +844,73 @@ class ChatActivity : AppCompatActivity() {
         profile?.let { ChatStore.save(this, it.id, updated) }
         updateWelcome()
         refreshChatList()
+    }
+
+    // -------------------------------------------------- message operations
+
+    private fun updateMessages(transform: (List<ChatMessage>) -> List<ChatMessage>) {
+        skipTypewriter()
+        val updated = chat.copy(
+            messages = transform(chat.messages),
+            updatedAt = System.currentTimeMillis(),
+        )
+        chat = updated
+        adapter.submit(updated.messages)
+        profile?.let { ChatStore.save(this, it.id, updated) }
+        updateWelcome()
+        refreshChatList()
+    }
+
+    private fun editMessage(message: ChatMessage) {
+        val input = EditText(this)
+        input.hint = getString(R.string.edit_message_hint)
+        input.setText(message.content)
+        input.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+            android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        val holder = FrameLayout(this)
+        val pad = (24 * resources.displayMetrics.density).toInt()
+        holder.setPadding(pad, pad, pad, 0)
+        holder.addView(input)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.edit_message)
+            .setView(holder)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isEmpty()) return@setPositiveButton
+                stopSpeaking()
+                // timestamp bump so DiffUtil's content check sees the change
+                updateMessages { list ->
+                    list.map {
+                        if (it.id == message.id) {
+                            it.copy(content = text, timestamp = System.currentTimeMillis())
+                        } else {
+                            it
+                        }
+                    }
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun deleteMessage(message: ChatMessage) {
+        stopSpeaking()
+        updateMessages { list -> list.filterNot { it.id == message.id } }
+    }
+
+    /** Drops the reply and everything after it, then re-asks with the rest. */
+    private fun regenerateAt(message: ChatMessage) {
+        if (busy || message.role != "assistant") return
+        aiConfigErrorOrNull()?.let {
+            appendMessage(ChatMessage("error", it))
+            return
+        }
+        stopSpeaking()
+        val idx = chat.messages.indexOfFirst { it.id == message.id }
+        if (idx < 0) return
+        updateMessages { it.take(idx) }
+        requestCompletion()
     }
 
     private fun typewriterReveal(message: ChatMessage) {
@@ -982,6 +1063,8 @@ class ChatActivity : AppCompatActivity() {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(0, 1, 0, R.string.copy_message)
         popup.menu.add(0, 2, 1, R.string.speak_message)
+        popup.menu.add(0, 3, 2, R.string.edit_message)
+        popup.menu.add(0, 4, 3, R.string.delete_message)
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 1 -> {
@@ -990,6 +1073,14 @@ class ChatActivity : AppCompatActivity() {
                 }
                 2 -> {
                     toggleSpeak(message)
+                    true
+                }
+                3 -> {
+                    editMessage(message)
+                    true
+                }
+                4 -> {
+                    deleteMessage(message)
                     true
                 }
                 else -> false
@@ -1001,15 +1092,26 @@ class ChatActivity : AppCompatActivity() {
     private fun showAssistantMoreMenu(message: ChatMessage, anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(0, 1, 0, R.string.message_fork)
+        popup.menu.add(0, 2, 1, R.string.regenerate_reply)
+        popup.menu.add(0, 3, 2, R.string.delete_message)
         // Future plugin actions — reserved, disabled for now.
-        popup.menu.add(0, 2, 1, R.string.message_gmail_draft).isEnabled = false
-        popup.menu.add(0, 3, 2, R.string.message_export_docs).isEnabled = false
+        popup.menu.add(0, 4, 3, R.string.message_gmail_draft).isEnabled = false
+        popup.menu.add(0, 5, 4, R.string.message_export_docs).isEnabled = false
         popup.setOnMenuItemClickListener { item ->
-            if (item.itemId == 1) {
-                forkBranchAt(message)
-                true
-            } else {
-                false
+            when (item.itemId) {
+                1 -> {
+                    forkBranchAt(message)
+                    true
+                }
+                2 -> {
+                    regenerateAt(message)
+                    true
+                }
+                3 -> {
+                    deleteMessage(message)
+                    true
+                }
+                else -> false
             }
         }
         popup.show()
