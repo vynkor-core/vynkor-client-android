@@ -20,7 +20,12 @@ class SttRecorder {
     private var audioRecord: AudioRecord? = null
     private var recordThread: Thread? = null
     private var onChunk: ((FloatArray) -> Unit)? = null
-    private val samples = ArrayList<Short>()
+
+    // Growable primitive buffer (R-11: no boxed Short per sample). Guarded by
+    // [bufferLock]; reset on start, drained by [snapshotAndClear].
+    private val bufferLock = Any()
+    private var buffer = ShortArray(BUFFER_INITIAL)
+    private var bufferSize = 0
 
     fun isRecording(): Boolean = recording
 
@@ -38,20 +43,24 @@ class SttRecorder {
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
-        val bufferSize = maxOf(minBuf * 2, 8192)
-        val record = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            bufferSize,
-        )
+        val recordBytes = maxOf(minBuf * 2, 8192)
+        val record = AudioRecord.Builder()
+            .setAudioSource(MediaRecorder.AudioSource.MIC)
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .build()
+            )
+            .setBufferSizeInBytes(recordBytes)
+            .build()
         if (record.state != AudioRecord.STATE_INITIALIZED) {
             Log.e(TAG, "AudioRecord failed to initialize")
             record.release()
             return
         }
-        synchronized(samples) { samples.clear() }
+        synchronized(bufferLock) { bufferSize = 0 }
         audioRecord = record
         recording = true
         recordThread = Thread({ readLoop(record) }, "stt-recorder").apply { start() }
@@ -67,22 +76,42 @@ class SttRecorder {
         recording = false
         onChunk = null
         val record = audioRecord ?: return FloatArray(0)
+        // Stop the record from THIS thread first: that unblocks the reader's
+        // blocking read(), so join() returns promptly and release() below can
+        // never race an in-flight read (releasing mid-read is UB / native crash).
         try {
-            recordThread?.join(JOIN_TIMEOUT_MS)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
+            if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                record.stop()
+            }
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "record.stop() during shutdown failed", e)
+        }
+        val thread = recordThread
+        if (thread != null) {
+            try {
+                thread.join(JOIN_TIMEOUT_MS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            if (thread.isAlive) {
+                // Pathological: reader still inside read(). Leaking the record
+                // beats releasing it under a live native reader.
+                Log.e(TAG, "stt reader did not exit; leaking AudioRecord instead of mid-read release")
+                audioRecord = null
+                recordThread = null
+                return snapshotAndClear()
+            }
         }
         recordThread = null
-        if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
-            record.stop()
-        }
         record.release()
         audioRecord = null
-        return synchronized(samples) {
-            val result = FloatArray(samples.size) { i -> samples[i] / 32768.0f }
-            samples.clear()
-            result
-        }
+        return snapshotAndClear()
+    }
+
+    private fun snapshotAndClear(): FloatArray = synchronized(bufferLock) {
+        val result = FloatArray(bufferSize) { i -> buffer[i] / 32768.0f }
+        bufferSize = 0
+        result
     }
 
     private fun readLoop(record: AudioRecord) {
@@ -92,21 +121,33 @@ class SttRecorder {
             while (recording) {
                 val read = record.read(buffer, 0, buffer.size)
                 if (read <= 0) break
-                synchronized(samples) {
-                    for (i in 0 until read) samples.add(buffer[i])
+                synchronized(bufferLock) {
+                    appendLocked(buffer, read)
                 }
                 onChunk?.invoke(
                     FloatArray(read) { i -> buffer[i] / 32768.0f },
                 )
             }
-        } catch (t: Throwable) {
-            Log.e(TAG, "mic read failed", t)
+        } catch (e: Exception) {
+            Log.e(TAG, "mic read failed", e)
         }
+    }
+
+    /** Caller holds [bufferLock]. Grows the storage geometrically. */
+    private fun appendLocked(chunk: ShortArray, count: Int) {
+        if (bufferSize + count > buffer.size) {
+            var newSize = buffer.size
+            while (bufferSize + count > newSize) newSize *= 2
+            buffer = buffer.copyOf(newSize)
+        }
+        System.arraycopy(chunk, 0, buffer, bufferSize, count)
+        bufferSize += count
     }
 
     companion object {
         private const val TAG = "SttRecorder"
         private const val SAMPLE_RATE = 16000
         private const val JOIN_TIMEOUT_MS = 1000L
+        private const val BUFFER_INITIAL = 1 shl 17 // 128k shorts ≈ 8 s @16 kHz
     }
 }

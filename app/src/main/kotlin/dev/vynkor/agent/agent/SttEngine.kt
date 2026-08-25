@@ -16,10 +16,13 @@ import java.util.concurrent.Executors
  *
  * The bundled `zipformer-ru-int8` model is **offline-only** — its metadata
  * lacks the streaming `encoder_dims`, so `OnlineRecognizer` rejects it. "Live"
- * dictation is therefore emulated: audio accumulates in an [SttSession] and
- * [partial] re-decodes everything spoken so far (the caller throttles it to
- * ~1 s), producing a near-real-time transcript that grows while the user
- * speaks. [finish] returns the final text and frees the session.
+ * dictation is therefore emulated: audio lands in an [SttSession] `pending`
+ * buffer and [partial] re-decodes only that bounded tail (R-11), prepending
+ * the text already frozen into `committedText`. When the tail outgrows
+ * [WINDOW_SAMPLES], its overflow is decoded once, folded into the committed
+ * prefix and dropped — so per-tick CPU and session memory stay constant no
+ * matter how long the user talks. [finish] decodes the remaining tail once
+ * more for the best final text and frees the session.
  *
  * The recognizer construction is slow (seconds), so [ensureLoaded] performs
  * it exactly once on a background loader thread. The `onReady` callback is
@@ -76,32 +79,60 @@ class SttEngine private constructor(context: Context) {
         if (chunk.isEmpty()) return
         synchronized(session.lock) {
             if (session.finished) return
-            for (s in chunk) session.samples.add(s)
+            for (s in chunk) session.pending.add(s)
         }
     }
 
     /**
-     * Decodes everything spoken so far and returns the current transcript
-     * (grows as the user keeps talking). CPU-bound: call on Dispatchers.IO.
+     * Decodes the bounded pending tail and returns the current transcript
+     * (grows as the user keeps talking). Commits overflow to the prefix when
+     * the tail exceeds [WINDOW_SAMPLES]. CPU-bound: call on Dispatchers.IO.
+     *
+     * Single-caller by design (the dictation coroutine ticks sequentially);
+     * concurrent [partial]/[finish] on one session is unsupported.
      */
-    fun partial(session: SttSession): String = transcribe(session)
+    fun partial(session: SttSession): String {
+        var snapshot = FloatArray(0)
+        var commitHead: FloatArray? = null
+        var splitAt = 0
+        synchronized(session.lock) {
+            if (session.pending.isEmpty()) return session.committedText
+            snapshot = session.pending.toFloatArray()
+            if (!session.finished && snapshot.size > WINDOW_SAMPLES) {
+                splitAt = snapshot.size - WINDOW_SAMPLES
+                commitHead = snapshot.copyOf(splitAt)
+                // trim now so memory stays bounded even if decode is slow
+                session.pending.subList(0, splitAt).clear()
+            }
+        }
+        commitHead?.let { head ->
+            val headText = decode(head)
+            synchronized(session.lock) { session.committedText += headText }
+        }
+        val tail = if (splitAt > 0) snapshot.copyOfRange(splitAt, snapshot.size) else snapshot
+        val tailText = decode(tail)
+        return synchronized(session.lock) { session.committedText } + tailText
+    }
 
     /**
      * Marks the session done, returns the final transcript and frees the
-     * accumulated audio. CPU-bound: call on Dispatchers.IO.
+     * accumulated audio. The remaining tail is decoded whole, once, for the
+     * best possible final text. CPU-bound: call on Dispatchers.IO.
      */
     fun finish(session: SttSession): String {
-        synchronized(session.lock) { session.finished = true }
-        val text = transcribe(session)
-        synchronized(session.lock) { session.samples.clear() }
-        return text
+        val tail: FloatArray
+        val committed: String
+        synchronized(session.lock) {
+            session.finished = true
+            tail = session.pending.toFloatArray()
+            session.pending.clear()
+            committed = session.committedText
+        }
+        return committed + decode(tail)
     }
 
-    private fun transcribe(session: SttSession): String {
+    private fun decode(samples: FloatArray): String {
         val rec = recognizer ?: return ""
-        val samples = synchronized(session.lock) {
-            if (session.samples.isEmpty()) FloatArray(0) else session.samples.toFloatArray()
-        }
         if (samples.isEmpty()) return ""
         return try {
             val stream: OfflineStream = rec.createStream()
@@ -112,8 +143,8 @@ class SttEngine private constructor(context: Context) {
             } finally {
                 stream.release()
             }
-        } catch (t: Throwable) {
-            Log.e(TAG, "transcribe failed", t)
+        } catch (e: Exception) {
+            Log.e(TAG, "transcribe failed", e)
             ""
         }
     }
@@ -137,8 +168,8 @@ class SttEngine private constructor(context: Context) {
             )
             recognizer = OfflineRecognizer(assetManager = assets, config = config)
             Log.i(TAG, "offline recognizer loaded")
-        } catch (t: Throwable) {
-            Log.e(TAG, "failed to load STT model", t)
+        } catch (e: Exception) {
+            Log.e(TAG, "failed to load STT model", e)
             recognizer = null
         } finally {
             synchronized(lock) {
@@ -150,8 +181,8 @@ class SttEngine private constructor(context: Context) {
         for (callback in callbacks) {
             try {
                 callback()
-            } catch (t: Throwable) {
-                Log.w(TAG, "ensureLoaded callback failed", t)
+            } catch (e: Exception) {
+                Log.w(TAG, "ensureLoaded callback failed", e)
             }
         }
     }
@@ -161,6 +192,9 @@ class SttEngine private constructor(context: Context) {
         private const val SAMPLE_RATE = 16000
         private const val FEATURE_DIM = 80
         private const val NUM_THREADS = 2
+
+        /** Tail re-decoded on every partial tick: bounds per-tick CPU. */
+        private const val WINDOW_SAMPLES = 15 * SAMPLE_RATE
 
         @Volatile
         private var instance: SttEngine? = null
@@ -173,12 +207,15 @@ class SttEngine private constructor(context: Context) {
 }
 
 /**
- * One dictation session: the audio accumulated so far. Fed from the recorder
- * thread, decoded on an IO thread; [SttSession.finished] stops further
- * accumulation after [SttEngine.finish].
+ * One dictation session: a frozen text prefix plus the bounded audio tail
+ * that is still being re-decoded. Fed from the recorder thread, decoded on an
+ * IO thread; [finished] stops further accumulation after [SttEngine.finish].
  */
 class SttSession internal constructor() {
     internal val lock = Any()
-    internal val samples = ArrayList<Float>()
+    internal var committedText = ""
+    internal val pending = ArrayList<Float>(SAMPLE_PREALLOC)
     internal var finished = false
 }
+
+private const val SAMPLE_PREALLOC = 16_000 * 30
