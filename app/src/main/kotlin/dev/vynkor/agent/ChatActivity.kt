@@ -234,7 +234,7 @@ class ChatActivity : AppCompatActivity() {
 
         val drawerChats = binding.drawerChats
         drawerAdapter = ChatListAdapter(
-            onOpen = { loadChat(it) },
+            onOpen = { chat, matchId -> openChatFromDrawer(chat, matchId) },
             onLongPress = { showChatMenu(it) },
         )
         drawerChats.layoutManager = LinearLayoutManager(this)
@@ -504,6 +504,9 @@ class ChatActivity : AppCompatActivity() {
     /** Drawer chat-search text; blank = search off (plain list). */
     private var searchQuery: String = ""
 
+    /** Message to scroll to + pulse after the next loadChat (search open). */
+    private var pendingHighlightMessageId: String? = null
+
     private fun renderProjectChips() {
         val active = profile
         val projects = if (active == null) emptyList() else ProjectStore.list(this, active.id)
@@ -669,6 +672,34 @@ class ChatActivity : AppCompatActivity() {
         if (binding.input.text?.toString() != draft) {
             binding.input.setText(draft)
             binding.input.setSelection(draft.length)
+        }
+        consumePendingHighlight()
+    }
+
+    /** Opens a chat from search results, aiming at the matched message. */
+    private fun openChatFromDrawer(target: Chat, scrollToMessageId: String?) {
+        pendingHighlightMessageId = scrollToMessageId
+        loadChat(target)
+    }
+
+    private fun consumePendingHighlight() {
+        val id = pendingHighlightMessageId ?: return
+        pendingHighlightMessageId = null
+        val list = binding.messages
+        list.post {
+            val idx = adapter.currentList.indexOfFirst { it.id == id }
+            if (idx < 0) return@post
+            (list.layoutManager as? LinearLayoutManager)?.scrollToPosition(idx)
+            list.post {
+                val vh = list.findViewHolderForAdapterPosition(idx) ?: return@post
+                vh.itemView.animate()
+                    .scaleX(PULSE_SCALE)
+                    .scaleY(PULSE_SCALE)
+                    .setDuration(150)
+                    .withEndAction {
+                        vh.itemView.animate().scaleX(1f).scaleY(1f).duration = 250
+                    }
+            }
         }
     }
 
@@ -1373,5 +1404,8 @@ class ChatActivity : AppCompatActivity() {
 
         /** Per-chat drafts kept in memory; oldest evicted beyond this. */
         private const val DRAFT_CACHE_LIMIT = 50
+
+        /** Scale pulse on the bubble a search result points at. */
+        private const val PULSE_SCALE = 1.04f
     }
 }

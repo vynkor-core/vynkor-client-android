@@ -21,7 +21,7 @@ import dev.vynkor.agent.databinding.ItemChatBinding
 data class ChatRow(val chat: Chat, val query: String?)
 
 class ChatListAdapter(
-    private val onOpen: (Chat) -> Unit,
+    private val onOpen: (Chat, String?) -> Unit,
     private val onLongPress: (Chat) -> Unit,
 ) : ListAdapter<ChatRow, ChatListAdapter.Holder>(DIFF) {
 
@@ -61,7 +61,7 @@ class ChatListAdapter(
                 } else {
                     snippet(chat, query)?.let { highlighted(it, query, highlightColor) } ?: ""
                 }
-            itemView.setOnClickListener { onOpen(chat) }
+            itemView.setOnClickListener { onOpen(chat, firstMatchId(row)) }
             itemView.setOnLongClickListener {
                 onLongPress(chat)
                 true
@@ -83,6 +83,14 @@ class ChatListAdapter(
 
         private fun indexOfMatch(text: String, query: String): Int =
             text.lowercase().indexOf(query.lowercase())
+
+        /** Id of the first message matching the row's search query, if any. */
+        private fun firstMatchId(row: ChatRow): String? {
+            val query = row.query?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+            return row.chat.messages
+                .firstOrNull { indexOfMatch(it.content, query) >= 0 }
+                ?.id
+        }
 
         private fun snippet(chat: Chat, query: String): String? {
             val content = chat.messages
