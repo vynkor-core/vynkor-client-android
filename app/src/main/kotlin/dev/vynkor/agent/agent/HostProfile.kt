@@ -7,6 +7,10 @@ import java.util.UUID
  * One saved host kernel the agent can connect to, with its per-host AI-plugin
  * settings (`ai.*` fields — the `ai` plugin's `chat_completion` params, minus
  * the API key itself, which never leaves the host).
+ *
+ * `deviceSecret` is the host-issued per-device credential (E-01) — profiles
+ * saved before E-01 carry it under the legacy `jwt_secret` JSON key; fromJson
+ * migrates them on load.
  */
 data class HostProfile(
     val id: String = UUID.randomUUID().toString(),
@@ -14,7 +18,7 @@ data class HostProfile(
     val hostUrl: String = "",
     val deviceId: String = "",
     val jwtToken: String = "",
-    val jwtSecret: String = "",
+    val deviceSecret: String = "",
     val certPem: String = "",
     val userId: String = "default",
     val aiProvider: String = "openai",
@@ -30,7 +34,7 @@ data class HostProfile(
         put("host_url", hostUrl)
         put("device_id", deviceId)
         put("jwt_token", jwtToken)
-        put("jwt_secret", jwtSecret)
+        put("device_secret", deviceSecret)
         put("cert_pem", certPem)
         put("user_id", userId)
         put("ai_provider", aiProvider)
@@ -60,7 +64,12 @@ data class HostProfile(
             hostUrl = o.optString("host_url"),
             deviceId = o.optString("device_id"),
             jwtToken = o.optString("jwt_token"),
-            jwtSecret = o.optString("jwt_secret"),
+            // E-01 migration: pre-E-01 stores kept the (master!) secret under
+            // "jwt_secret" — read it as the device secret so old profiles keep
+            // connecting; a v2 re-pair overwrites it with the real credential
+            deviceSecret = o.optString("device_secret", "").ifBlank {
+                o.optString("jwt_secret")
+            },
             certPem = o.optString("cert_pem"),
             userId = o.optString("user_id").ifBlank { "default" },
             aiProvider = o.optString("ai_provider").ifBlank { "openai" },

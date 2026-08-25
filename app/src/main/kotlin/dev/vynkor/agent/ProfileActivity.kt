@@ -40,7 +40,7 @@ class ProfileActivity : AppCompatActivity() {
             deviceId.setText(p.deviceId)
             userId.setText(p.userId)
             jwt.setText(p.jwtToken)
-            secret.setText(p.jwtSecret)
+            secret.setText(p.deviceSecret)
         } ?: run {
             deviceId.setText(DeviceIdentity.deviceId(this))
             userId.setText("default")
@@ -53,7 +53,7 @@ class ProfileActivity : AppCompatActivity() {
                 hostUrl = hostUrl.text?.toString()?.trim().orEmpty(),
                 deviceId = deviceId.text?.toString()?.trim().orEmpty(),
                 jwtToken = jwt.text?.toString()?.trim().orEmpty(),
-                jwtSecret = secret.text?.toString()?.trim().orEmpty(),
+                deviceSecret = secret.text?.toString()?.trim().orEmpty(),
                 userId = userId.text?.toString()?.trim().orEmpty().ifBlank { "default" },
                 // AI settings are no longer configured by hand: the host's `ai`
                 // plugin is expected to declare its available models (see

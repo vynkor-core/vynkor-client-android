@@ -70,7 +70,7 @@ class AgentService : Service() {
         val config = AgentConfig(
             hostUrl = profile.hostUrl,
             jwtToken = profile.jwtToken,
-            jwtSecret = profile.jwtSecret,
+            deviceSecret = profile.deviceSecret,
             certPem = profile.certPem,
             deviceId = profile.deviceId,
             capabilities = listOf(

@@ -22,7 +22,6 @@
     <string name="scan_prompt">Point at the host\'s pairing QR (vyn device connect)</string>
     <string name="scan_cancelled">Scan cancelled</string>
     <string name="camera_denied">Camera permission denied — allow it to scan pairing QR codes</string>
-    <string name="scan_invalid">Not a vynkor pairing QR</string>
     <string name="paired_and_connected">Paired with %1$s</string>
     <string name="no_profile">No profile</string>
     <string name="unnamed_profile">Unnamed</string>

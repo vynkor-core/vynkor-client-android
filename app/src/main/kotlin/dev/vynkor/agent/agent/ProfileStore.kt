@@ -106,7 +106,9 @@ object ProfileStore {
             hostUrl = legacyUrl,
             deviceId = DeviceIdentity.deviceId(context),
             jwtToken = p.getString(KEY_JWT, null) ?: "",
-            jwtSecret = p.getString(KEY_SECRET, null) ?: "",
+            // pre-E-01 single-config key carried the host secret; treat it as
+            // the device secret — a v2 re-pair overwrites it
+            deviceSecret = p.getString(KEY_SECRET, null) ?: "",
         )
         val list = mutableListOf(profile)
         persist(context, list)

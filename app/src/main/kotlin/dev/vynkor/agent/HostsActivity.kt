@@ -127,10 +127,14 @@ class HostsActivity : AppCompatActivity() {
      * confirmed by the user before anything is saved or connected.
      */
     private fun onPairingPayload(raw: String, external: Boolean) {
-        val profile = PairingPayload.parse(raw)
-        if (profile == null) {
-            Toast.makeText(this, R.string.scan_invalid, Toast.LENGTH_LONG).show()
-            return
+        val profile = when (val result = PairingPayload.parseWithReason(raw)) {
+            is PairingPayload.Result.Ok -> result.profile
+            is PairingPayload.Result.Invalid -> {
+                // E-01: v1 payloads carry the host master secret — the reason
+                // says exactly that instead of a generic "invalid"
+                Toast.makeText(this, result.reason, Toast.LENGTH_LONG).show()
+                return
+            }
         }
         if (!external) {
             applyPairing(profile)
