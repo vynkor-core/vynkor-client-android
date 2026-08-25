@@ -102,6 +102,15 @@ class ChatActivity : AppCompatActivity() {
     /** Progressive reveal of the latest assistant reply (display-only). */
     private var typingJob: Job? = null
 
+    /**
+     * Unsent composer text per chat id — switching conversations no longer
+     * loses what was typed. Bounded: oldest drafts evicted beyond the cap.
+     */
+    private val drafts = object : LinkedHashMap<String, String>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
+            size > DRAFT_CACHE_LIMIT
+    }
+
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -649,12 +658,18 @@ class ChatActivity : AppCompatActivity() {
 
     private fun loadChat(loaded: Chat?) {
         skipTypewriter()
+        drafts[chat.id] = binding.input.text?.toString().orEmpty()
         // A fresh chat lands in the currently selected project (if any).
         chat = loaded ?: Chat(projectId = selectedProjectId.orEmpty())
         adapter.submit(chat.messages)
         refreshTitle()
         updateWelcome()
         drawer.closeDrawers()
+        val draft = drafts[chat.id].orEmpty()
+        if (binding.input.text?.toString() != draft) {
+            binding.input.setText(draft)
+            binding.input.setSelection(draft.length)
+        }
     }
 
     private fun showChatMenu(target: Chat) {
@@ -1355,5 +1370,8 @@ class ChatActivity : AppCompatActivity() {
         /** Typewriter pacing: full reveal in ~1.5 s regardless of length. */
         private const val TYPEWRITER_TICKS = 60
         private const val TYPEWRITER_INTERVAL_MS = 25L
+
+        /** Per-chat drafts kept in memory; oldest evicted beyond this. */
+        private const val DRAFT_CACHE_LIMIT = 50
     }
 }
