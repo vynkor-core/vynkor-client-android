@@ -8,6 +8,7 @@ import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
 import dev.vynkor.agent.AppLock
 import dev.vynkor.agent.agent.SecurityStore
+import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.databinding.ActivitySecurityBinding
 
 /**
@@ -19,6 +20,7 @@ class SecurityActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySecurityBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppPrefs.applyTheme(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         binding = ActivitySecurityBinding.inflate(layoutInflater)

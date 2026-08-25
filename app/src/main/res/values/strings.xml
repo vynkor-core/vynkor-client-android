@@ -129,6 +129,16 @@
     <string name="notifications_title">Notifications</string>
     <string name="notif_filter_all_forwarded">All apps forwarded to host</string>
     <string name="notif_filter_muted_fmt">Muted apps: %d</string>
+    <string name="appearance_title">Appearance</string>
+    <string name="theme_system">Follow system</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="chat_behavior_title">Chat</string>
+    <string name="chat_behavior_typewriter">Typewriter reply animation</string>
+    <string name="chat_behavior_haptics">Haptic feedback</string>
+    <string name="chat_behavior_typewriter_short">Typewriter</string>
+    <string name="chat_behavior_haptics_short">Haptics</string>
+    <string name="chat_behavior_all_off">Off</string>
     <string name="hosts_count_fmt">%1$d configured</string>
     <string name="security_subtitle_bio">Fingerprint · auto-lock</string>
     <string name="security_subtitle_pin">PIN · fingerprint · auto-lock</string>

@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.textfield.TextInputEditText
+import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.databinding.ActivityProfileBinding
 import dev.vynkor.agent.agent.DeviceIdentity
 import dev.vynkor.agent.agent.HostProfile
@@ -16,6 +17,7 @@ class ProfileActivity : AppCompatActivity() {
     private lateinit var binding: ActivityProfileBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppPrefs.applyTheme(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         binding = ActivityProfileBinding.inflate(layoutInflater)

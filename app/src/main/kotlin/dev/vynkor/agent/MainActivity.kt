@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import dev.vynkor.agent.agent.AgentHolder
 import dev.vynkor.agent.agent.AgentService
 import dev.vynkor.agent.agent.AppPrefs
@@ -20,6 +21,7 @@ import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.agent.ProfileStore
 import dev.vynkor.agent.agent.SecurityStore
 import dev.vynkor.agent.databinding.ActivityMainBinding
+import dev.vynkor.agent.databinding.DialogChatBehaviorBinding
 import dev.vynkor.agent.databinding.ItemSettingsRowBinding
 import kotlinx.coroutines.launch
 
@@ -34,6 +36,7 @@ class MainActivity : AppCompatActivity() {
     private var pendingServiceStart = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppPrefs.applyTheme(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -47,6 +50,12 @@ class MainActivity : AppCompatActivity() {
 
         bindRow(binding.rowNotifications, R.drawable.ic_notifications, R.string.notifications_title)
             .setOnClickListener { startActivity(Intent(this, NotificationFilterActivity::class.java)) }
+
+        bindRow(binding.rowAppearance, R.drawable.ic_palette, R.string.appearance_title)
+            .setOnClickListener { showAppearanceDialog() }
+
+        bindRow(binding.rowChat, R.drawable.ic_tune, R.string.chat_behavior_title)
+            .setOnClickListener { showChatBehaviorDialog() }
 
         bindRow(binding.rowSecurity, R.drawable.ic_lock, R.string.security_title)
             .setOnClickListener { startActivity(Intent(this, SecurityActivity::class.java)) }
@@ -106,6 +115,8 @@ class MainActivity : AppCompatActivity() {
         binding.activeHost.text = active?.hostUrl ?: ""
         binding.rowHosts.rowSubtitle.text = getString(R.string.hosts_count_fmt, ProfileStore.list(this).size)
         binding.rowNotifications.rowSubtitle.text = notificationSubtitle()
+        binding.rowAppearance.rowSubtitle.text = themeSubtitle()
+        binding.rowChat.rowSubtitle.text = chatBehaviorSubtitle()
         binding.rowSecurity.rowSubtitle.text = securitySubtitle()
     }
 
@@ -113,6 +124,61 @@ class MainActivity : AppCompatActivity() {
         val muted = AppPrefs.mutedPackages(this).size
         return if (muted == 0) getString(R.string.notif_filter_all_forwarded)
         else getString(R.string.notif_filter_muted_fmt, muted)
+    }
+
+    private fun themeSubtitle(): String = getString(
+        when (AppPrefs.theme(this)) {
+            AppPrefs.THEME_LIGHT -> R.string.theme_light
+            AppPrefs.THEME_DARK -> R.string.theme_dark
+            else -> R.string.theme_system
+        },
+    )
+
+    private fun chatBehaviorSubtitle(): String {
+        val enabled = buildList {
+            if (AppPrefs.typewriterEnabled(this@MainActivity)) add(getString(R.string.chat_behavior_typewriter_short))
+            if (AppPrefs.hapticsEnabled(this@MainActivity)) add(getString(R.string.chat_behavior_haptics_short))
+        }
+        return if (enabled.isEmpty()) getString(R.string.chat_behavior_all_off)
+        else enabled.joinToString(", ")
+    }
+
+    private fun showAppearanceDialog() {
+        val values = arrayOf(AppPrefs.THEME_SYSTEM, AppPrefs.THEME_LIGHT, AppPrefs.THEME_DARK)
+        val labels = arrayOf(
+            getString(R.string.theme_system),
+            getString(R.string.theme_light),
+            getString(R.string.theme_dark),
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.appearance_title)
+            .setSingleChoiceItems(labels, values.indexOf(AppPrefs.theme(this))) { dialog, which ->
+                dialog.dismiss()
+                AppPrefs.setTheme(this, values[which])
+                // Default-night-mode change recreates the activity itself.
+                AppPrefs.applyTheme(this)
+                refresh()
+            }
+            .show()
+    }
+
+    private fun showChatBehaviorDialog() {
+        val binding = DialogChatBehaviorBinding.inflate(layoutInflater)
+        binding.typewriterToggle.isChecked = AppPrefs.typewriterEnabled(this)
+        binding.hapticsToggle.isChecked = AppPrefs.hapticsEnabled(this)
+        binding.typewriterToggle.setOnCheckedChangeListener { _, checked ->
+            AppPrefs.setTypewriterEnabled(this, checked)
+            refresh()
+        }
+        binding.hapticsToggle.setOnCheckedChangeListener { _, checked ->
+            AppPrefs.setHapticsEnabled(this, checked)
+            refresh()
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.chat_behavior_title)
+            .setView(binding.root)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun securitySubtitle(): String {

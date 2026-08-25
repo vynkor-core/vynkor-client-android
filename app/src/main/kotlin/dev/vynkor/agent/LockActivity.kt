@@ -8,6 +8,7 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import com.google.android.material.snackbar.Snackbar
 import dev.vynkor.agent.AppLock
+import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.agent.SecurityStore
 import dev.vynkor.agent.databinding.ActivityLockBinding
 
@@ -22,6 +23,7 @@ class LockActivity : AppCompatActivity() {
     private var failedAttempts = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppPrefs.applyTheme(this)
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         binding = ActivityLockBinding.inflate(layoutInflater)

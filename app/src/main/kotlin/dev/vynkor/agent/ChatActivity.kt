@@ -38,6 +38,7 @@ import com.google.android.material.chip.Chip
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
+import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.databinding.ActivityChatBinding
 import dev.vynkor.agent.agent.AgentHolder
 import dev.vynkor.agent.agent.HostStatus
@@ -127,6 +128,7 @@ class ChatActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppPrefs.applyTheme(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         binding = ActivityChatBinding.inflate(layoutInflater)
@@ -826,7 +828,7 @@ class ChatActivity : AppCompatActivity() {
         }
 
         appendMessage(ChatMessage("user", text))
-        binding.composerAction.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        hapticTick()
         if (chat.title.isBlank()) {
             chat = ChatStore.autoTitle(chat)
             profile?.let { ChatStore.save(this, it.id, chat) }
@@ -961,6 +963,7 @@ class ChatActivity : AppCompatActivity() {
 
     private fun typewriterReveal(message: ChatMessage) {
         if (message.role != "assistant") return
+        if (!AppPrefs.typewriterEnabled(this)) return
         typingJob?.cancel()
         adapter.startTyping(message)
         val step = maxOf(1, message.content.length / TYPEWRITER_TICKS)
@@ -1000,6 +1003,12 @@ class ChatActivity : AppCompatActivity() {
             if (adapter.itemCount > 0 && last != RecyclerView.NO_POSITION &&
                 last < adapter.itemCount - 1
             ) View.VISIBLE else View.GONE
+    }
+
+    private fun hapticTick() {
+        if (AppPrefs.hapticsEnabled(this)) {
+            binding.composerAction.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
     }
 
     /**
@@ -1234,9 +1243,7 @@ class ChatActivity : AppCompatActivity() {
             val started = controller.startSession(applicationContext, source = "chat-ui")
             runOnUiThread {
                 if (started) {
-                    binding.composerAction.performHapticFeedback(
-                        HapticFeedbackConstants.VIRTUAL_KEY,
-                    )
+                    hapticTick()
                     snack(R.string.mic_host_started)
                 } else {
                     snack(R.string.mic_start_failed)
@@ -1308,7 +1315,7 @@ class ChatActivity : AppCompatActivity() {
             snack(R.string.mic_start_failed)
             return
         }
-        binding.composerAction.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        hapticTick()
         partialJob = lifecycleScope.launch {
             val startedAt = SystemClock.elapsedRealtime()
             while (isActive && sttSession != null) {
@@ -1342,7 +1349,7 @@ class ChatActivity : AppCompatActivity() {
         val session = sttSession
         sttSession = null
         recorder.stop()
-        binding.composerAction.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        hapticTick()
         setListeningUi(false)
         if (session != null) {
             lifecycleScope.launch {

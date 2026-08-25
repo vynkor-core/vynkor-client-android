@@ -22,6 +22,7 @@ import dev.vynkor.agent.agent.DeviceIdentity
 import dev.vynkor.agent.agent.HostProfile
 import dev.vynkor.agent.agent.PairingPayload
 import dev.vynkor.agent.agent.ProfileStore
+import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.databinding.ActivityHostsBinding
 
 /**
@@ -49,6 +50,7 @@ class HostsActivity : AppCompatActivity() {
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppPrefs.applyTheme(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         binding = ActivityHostsBinding.inflate(layoutInflater)
