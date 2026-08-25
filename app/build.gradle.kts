@@ -3,6 +3,7 @@ import java.io.File
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.kapt)
 }
 
 android {
@@ -95,6 +96,17 @@ dependencies {
     // lands in the APK (libjnidispatch is packaged per-ABI in the AAR).
     implementation(libs.jna) { artifact { type = "aar" } }
     implementation(libs.markwon.core)
+    // Rich AI-answer rendering: tables, strikethrough, auto-links and
+    // prism4j syntax highlighting for fenced code blocks.
+    implementation(libs.markwon.ext.tables)
+    implementation(libs.markwon.ext.strikethrough)
+    implementation(libs.markwon.linkify)
+    // prism4j pulls legacy annotations-java5 which duplicates
+    // org.jetbrains:annotations classes -> checkDebugDuplicateClasses.
+    implementation(libs.markwon.syntax.highlight) {
+        exclude(group = "org.jetbrains", module = "annotations-java5")
+    }
+    kapt(libs.prism4j.bundler)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

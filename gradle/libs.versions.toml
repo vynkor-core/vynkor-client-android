@@ -16,6 +16,7 @@ lifecycle = "2.8.4"
 coroutines = "1.8.1"
 zxing = "4.3.0"
 biometric = "1.1.0"
+prism4j-bundler = "2.0.0"
 junit = "4.13.2"
 robolectric = "4.14.1"
 androidx-test-core = "1.6.1"
@@ -23,6 +24,11 @@ androidx-test-core = "1.6.1"
 [libraries]
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 markwon-core = { module = "io.noties.markwon:core", version.ref = "markwon" }
+markwon-ext-tables = { module = "io.noties.markwon:ext-tables", version.ref = "markwon" }
+markwon-ext-strikethrough = { module = "io.noties.markwon:ext-strikethrough", version.ref = "markwon" }
+markwon-linkify = { module = "io.noties.markwon:linkify", version.ref = "markwon" }
+markwon-syntax-highlight = { module = "io.noties.markwon:syntax-highlight", version.ref = "markwon" }
+prism4j-bundler = { module = "io.noties:prism4j-bundler", version.ref = "prism4j-bundler" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
@@ -39,3 +45,4 @@ androidx-test-core = { module = "androidx.test:core", version.ref = "androidx-te
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-kapt = { id = "org.jetbrains.kotlin.kapt", version.ref = "kotlin" }
