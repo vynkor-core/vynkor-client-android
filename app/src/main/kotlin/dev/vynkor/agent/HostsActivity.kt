@@ -3,7 +3,10 @@ package dev.vynkor.agent
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
+import android.view.HapticFeedbackConstants
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.android.material.snackbar.Snackbar
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.vynkor.agent.agent.AgentHolder
@@ -38,15 +42,29 @@ class HostsActivity : AppCompatActivity() {
     private val scanLauncher = registerForActivityResult(ScanContract()) { result ->
         if (result.contents == null) {
             Toast.makeText(this, R.string.scan_cancelled, Toast.LENGTH_SHORT).show()
-        } else {
-            onPairingPayload(result.contents!!, external = false)
+            return@registerForActivityResult
         }
+        binding.root.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        onPairingPayload(result.contents!!, external = false)
     }
 
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) launchScanner()
-            else Toast.makeText(this, R.string.camera_denied, Toast.LENGTH_LONG).show()
+            if (granted) {
+                launchScanner()
+            } else {
+                Snackbar.make(
+                    findViewById(android.R.id.content),
+                    R.string.camera_denied,
+                    Snackbar.LENGTH_LONG,
+                ).setAction(R.string.open_settings) {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).setData(
+                            Uri.fromParts("package", packageName, null),
+                        ),
+                    )
+                }.show()
+            }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -118,6 +136,8 @@ class HostsActivity : AppCompatActivity() {
             ScanOptions()
                 .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                 .setPrompt(getString(R.string.scan_prompt))
+                .setBeepEnabled(false)
+                .setOrientationLocked(true),
         )
     }
 
