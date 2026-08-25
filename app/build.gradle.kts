@@ -1,8 +1,8 @@
 import java.io.File
 
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.android)
 }
 
 android {
@@ -15,16 +15,43 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+    }
 
-        // pull the Rust cdylib into the APK's jniLibs
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+    // R-26: per-ABI APKs (~1/3 the download); a universal APK is still built
+    // so existing install scripts keep working.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            // Credentials arrive from the environment/CI — never committed.
+            val ksPath = System.getenv("VYNKOR_RELEASE_STORE") ?: ""
+            if (ksPath.isNotBlank()) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("VYNKOR_RELEASE_STORE_PASS")
+                keyAlias = System.getenv("VYNKOR_RELEASE_KEY_ALIAS") ?: "vynkor"
+                keyPassword = System.getenv("VYNKOR_RELEASE_KEY_PASS")
+            }
         }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R-21: R8 + resource shrinking. Keep rules live in
+            // app/proguard-rules.pro (UniFFI/JNA, sherpa-onnx JNI).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -39,6 +66,12 @@ android {
 
     buildFeatures {
         buildConfig = true
+        // R-31: generated bindings instead of findViewById.
+        viewBinding = true
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
     }
 
     androidResources {
@@ -60,26 +93,40 @@ dependencies {
     // UniFFI-generated Kotlin bindings use JNA to reach the Rust cdylib.
     // Use the AAR, not the JAR: the JAR's native libjnidispatch.so never
     // lands in the APK (libjnidispatch is packaged per-ABI in the AAR).
-    implementation("net.java.dev.jna:jna:5.15.0@aar")
-    implementation("io.noties.markwon:core:4.6.2")
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation(libs.jna) { artifact { type = "aar" } }
+    implementation(libs.markwon.core)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.androidx.recyclerview)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.process)
+    implementation(libs.kotlinx.coroutines.android)
+    // App-entry gate: BiometricPrompt (fingerprint) with PIN fallback.
+    implementation(libs.androidx.biometric)
     // QR pairing: scan the host's `vynkor://pair` QR to fill a profile.
-    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    implementation(libs.zxing.android.embedded)
     // On-device speech-to-text (local models in app/src/main/assets/stt/).
     implementation(files("libs/sherpa-onnx-1.13.5.aar"))
+
+    // R-30: JVM unit tests. Robolectric fakes the Android framework so
+    // PairingPayload (Uri), HostProfile and ChatStore (org.json, prefs) are
+    // testable without a device.
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }
 
 // Build the Rust core with cargo-ndk and copy the .so files next to the
-// generated bindings. Runs on every :app:mergeDebugNativeLibs.
+// generated bindings. Declares inputs/outputs (R-26) so Gradle skips the
+// multi-ABI release rebuild when rust/ sources are unchanged.
 tasks.register<Exec>("cargoNdkBuild") {
     workingDir = File(rootProject.projectDir, "rust")
     environment("ANDROID_HOME", System.getenv("ANDROID_HOME") ?: "${System.getProperty("user.home")}/.android-sdk")
     val outDir = File(projectDir, "build/rustLibs")
+    inputs.files(fileTree("$rootDir/rust/src"))
+    inputs.file("$rootDir/rust/Cargo.toml")
+    outputs.dir(outDir)
     doFirst {
         outDir.mkdirs()
     }
