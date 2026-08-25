@@ -63,6 +63,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".NotificationFilterActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".SecurityActivity"
             android:exported="false" />
 

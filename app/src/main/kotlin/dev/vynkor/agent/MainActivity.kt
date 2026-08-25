@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import dev.vynkor.agent.agent.AgentHolder
 import dev.vynkor.agent.agent.AgentService
+import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.agent.ProfileStore
 import dev.vynkor.agent.agent.SecurityStore
@@ -43,6 +44,9 @@ class MainActivity : AppCompatActivity() {
 
         bindRow(binding.rowHosts, R.drawable.ic_hosts, R.string.hosts_title)
             .setOnClickListener { startActivity(Intent(this, HostsActivity::class.java)) }
+
+        bindRow(binding.rowNotifications, R.drawable.ic_notifications, R.string.notifications_title)
+            .setOnClickListener { startActivity(Intent(this, NotificationFilterActivity::class.java)) }
 
         bindRow(binding.rowSecurity, R.drawable.ic_lock, R.string.security_title)
             .setOnClickListener { startActivity(Intent(this, SecurityActivity::class.java)) }
@@ -101,7 +105,14 @@ class MainActivity : AppCompatActivity() {
             active?.name?.ifBlank { getString(R.string.unnamed_profile) } ?: getString(R.string.no_profile)
         binding.activeHost.text = active?.hostUrl ?: ""
         binding.rowHosts.rowSubtitle.text = getString(R.string.hosts_count_fmt, ProfileStore.list(this).size)
+        binding.rowNotifications.rowSubtitle.text = notificationSubtitle()
         binding.rowSecurity.rowSubtitle.text = securitySubtitle()
+    }
+
+    private fun notificationSubtitle(): String {
+        val muted = AppPrefs.mutedPackages(this).size
+        return if (muted == 0) getString(R.string.notif_filter_all_forwarded)
+        else getString(R.string.notif_filter_muted_fmt, muted)
     }
 
     private fun securitySubtitle(): String {
