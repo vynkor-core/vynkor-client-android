@@ -43,8 +43,10 @@ data class HostProfile(
     fun effectiveModel(): String =
         aiModel.ifBlank { DEFAULT_MODEL_BY_PROVIDER[aiProvider] ?: "" }
 
-    fun effectiveBaseUrl(): String =
-        aiBaseUrl.ifBlank { if (aiProvider == "openai") "http://localhost:11434/v1" else "" }
+    // №53: no synthetic default — `http://localhost:11434` on a phone pointed
+    // at itself and masked misconfiguration. Blank means "unset"; the host
+    // omits base_url and ProfileActivity injects defaults for new profiles.
+    fun effectiveBaseUrl(): String = aiBaseUrl
 
     companion object {
         val DEFAULT_MODEL_BY_PROVIDER: Map<String, String> = mapOf(
