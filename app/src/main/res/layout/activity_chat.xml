@@ -190,15 +190,13 @@
             </com.google.android.material.card.MaterialCardView>
         </FrameLayout>
 
-        <TextView
+        <dev.vynkor.agent.TypingDotsView
             android:id="@+id/typing"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="48dp"
+            android:layout_height="16dp"
             android:layout_marginStart="20dp"
-            android:layout_marginBottom="4dp"
-            android:text="@string/typing"
-            android:textAppearance="?attr/textAppearanceBodySmall"
-            android:textColor="?attr/colorOnSurfaceVariant"
+            android:layout_marginBottom="6dp"
+            android:contentDescription="@string/typing"
             android:visibility="gone" />
 
         <TextView

@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.ContextThemeWrapper
+import android.view.HapticFeedbackConstants
 import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -28,6 +29,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.doAfterTextChanged
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.appbar.MaterialToolbar
@@ -97,6 +99,9 @@ class ChatActivity : AppCompatActivity() {
     @Volatile
     private var lastGeneratedDraft: String? = null
 
+    /** Progressive reveal of the latest assistant reply (display-only). */
+    private var typingJob: Job? = null
+
     private val micPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
@@ -151,9 +156,16 @@ class ChatActivity : AppCompatActivity() {
             onCopy = { copyMessage(it) },
             onMore = { message, anchor -> showAssistantMoreMenu(message, anchor) },
             onSpeak = { toggleSpeak(it) },
+            onTypingTap = { skipTypewriter() },
         )
         list.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         list.adapter = adapter
+        // Typewriter ticks rebind via payload; change cross-fades would flicker.
+        (list.itemAnimator as? DefaultItemAnimator)?.apply {
+            supportsChangeAnimations = false
+            addDuration = 200
+            changeDuration = 0
+        }
         adapter.submit(chat.messages)
 
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -371,6 +383,7 @@ class ChatActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        skipTypewriter()
         partialJob?.cancel()
         partialJob = null
         sttSession = null
@@ -635,6 +648,7 @@ class ChatActivity : AppCompatActivity() {
     }
 
     private fun loadChat(loaded: Chat?) {
+        skipTypewriter()
         // A fresh chat lands in the currently selected project (if any).
         chat = loaded ?: Chat(projectId = selectedProjectId.orEmpty())
         adapter.submit(chat.messages)
@@ -772,6 +786,7 @@ class ChatActivity : AppCompatActivity() {
         }
 
         appendMessage(ChatMessage("user", text))
+        binding.composerAction.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         if (chat.title.isBlank()) {
             chat = ChatStore.autoTitle(chat)
             profile?.let { ChatStore.save(this, it.id, chat) }
@@ -790,7 +805,9 @@ class ChatActivity : AppCompatActivity() {
                 runCatching { AiClient.chat(agent, active, context) }
             }
             result.onSuccess { reply ->
-                appendMessage(ChatMessage("assistant", reply.content))
+                val replyMessage = ChatMessage("assistant", reply.content)
+                appendMessage(replyMessage)
+                typewriterReveal(replyMessage)
             }.onFailure { e ->
                 val message = when (e) {
                     is AiException -> e.message ?: getString(R.string.ai_error)
@@ -813,6 +830,27 @@ class ChatActivity : AppCompatActivity() {
         profile?.let { ChatStore.save(this, it.id, updated) }
         updateWelcome()
         refreshChatList()
+    }
+
+    private fun typewriterReveal(message: ChatMessage) {
+        if (message.role != "assistant") return
+        typingJob?.cancel()
+        adapter.startTyping(message)
+        val step = maxOf(1, message.content.length / TYPEWRITER_TICKS)
+        typingJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(TYPEWRITER_INTERVAL_MS)
+                if (adapter.stepTyping(message.id, step)) break
+            }
+            adapter.finishTyping()
+            typingJob = null
+        }
+    }
+
+    private fun skipTypewriter() {
+        typingJob?.cancel()
+        typingJob = null
+        adapter.finishTyping()
     }
 
     private fun setBusyUi(b: Boolean) {
@@ -1047,8 +1085,14 @@ class ChatActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.Default) {
             val started = controller.startSession(applicationContext, source = "chat-ui")
             runOnUiThread {
-                if (started) snack(R.string.mic_host_started)
-                else snack(R.string.mic_start_failed)
+                if (started) {
+                    binding.composerAction.performHapticFeedback(
+                        HapticFeedbackConstants.VIRTUAL_KEY,
+                    )
+                    snack(R.string.mic_host_started)
+                } else {
+                    snack(R.string.mic_start_failed)
+                }
             }
         }
     }
@@ -1116,6 +1160,7 @@ class ChatActivity : AppCompatActivity() {
             snack(R.string.mic_start_failed)
             return
         }
+        binding.composerAction.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         partialJob = lifecycleScope.launch {
             val startedAt = SystemClock.elapsedRealtime()
             while (isActive && sttSession != null) {
@@ -1149,6 +1194,7 @@ class ChatActivity : AppCompatActivity() {
         val session = sttSession
         sttSession = null
         recorder.stop()
+        binding.composerAction.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         setListeningUi(false)
         if (session != null) {
             lifecycleScope.launch {
@@ -1203,5 +1249,9 @@ class ChatActivity : AppCompatActivity() {
 
         /** History window sent to the host AI per message (R-05 payload budget). */
         private const val HISTORY_WINDOW = 20
+
+        /** Typewriter pacing: full reveal in ~1.5 s regardless of length. */
+        private const val TYPEWRITER_TICKS = 60
+        private const val TYPEWRITER_INTERVAL_MS = 25L
     }
 }
