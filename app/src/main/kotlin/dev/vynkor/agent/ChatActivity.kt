@@ -102,6 +102,27 @@ class ChatActivity : AppCompatActivity() {
             uris?.forEach { uri -> addPendingAttachment(uri, null, null) }
         }
 
+    private var pendingCameraFile: java.io.File? = null
+
+    private val cameraPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) launchCameraCapture() else snack(R.string.camera_denied)
+        }
+
+    private val cameraLauncher =
+        registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+            val file = pendingCameraFile
+            pendingCameraFile = null
+            if (ok && file != null && file.length() > 0) {
+                addPendingAttachment(
+                    Uri.fromFile(file),
+                    displayName = "photo_${System.currentTimeMillis() / 1000}.jpg",
+                    mimeHint = "image/jpeg",
+                )
+                runCatching { file.delete() }
+            }
+        }
+
     /** Set when the host-stream flow asked for RECORD_AUDIO and is waiting. */
     @Volatile
     private var pendingHostStream = false
@@ -674,19 +695,24 @@ class ChatActivity : AppCompatActivity() {
             },
         )
     }
-
-    private fun showAttachMenu() {        val popup = PopupMenu(this, binding.attachButton)
-        popup.menu.add(0, 1, 0, R.string.attach_photo)
-        popup.menu.add(0, 2, 1, R.string.attach_file)
+    private fun showAttachMenu() {
+        val popup = PopupMenu(this, binding.attachButton)
+        popup.menu.add(0, 1, 0, R.string.attach_camera_photo)
+        popup.menu.add(0, 2, 1, R.string.attach_photo)
+        popup.menu.add(0, 3, 2, R.string.attach_file)
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 1 -> {
+                    ensureCameraPermissionThenCapture()
+                    true
+                }
+                2 -> {
                     mediaPicker.launch(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo),
                     )
                     true
                 }
-                2 -> {
+                3 -> {
                     filePicker.launch(arrayOf("*/*"))
                     true
                 }
@@ -694,6 +720,39 @@ class ChatActivity : AppCompatActivity() {
             }
         }
         popup.show()
+    }
+
+    /**
+     * The manifest declares CAMERA, so ACTION_IMAGE_CAPTURE needs the runtime
+     * grant on modern Android even though the system camera app does the work.
+     */
+    private fun ensureCameraPermissionThenCapture() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            launchCameraCapture()
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun launchCameraCapture() {
+        val dir = java.io.File(cacheDir, "camera").apply { mkdirs() }
+        val target = java.io.File(dir, "pending_${System.currentTimeMillis()}.jpg")
+        pendingCameraFile = target
+        val ok = runCatching {
+            cameraLauncher.launch(
+                androidx.core.content.FileProvider.getUriForFile(
+                    this,
+                    "$packageName.fileprovider",
+                    target,
+                ),
+            )
+        }
+        if (ok.isFailure) {
+            pendingCameraFile = null
+            snack(R.string.camera_capture_failed)
+        }
     }
 
     private fun addPendingAttachment(uri: Uri, displayName: String?, mimeHint: String?) {

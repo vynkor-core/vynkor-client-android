@@ -192,6 +192,12 @@
     <string name="tile_subtitle_on">Running</string>
     <string name="tile_subtitle_off">Stopped</string>
 
+    <!-- Home-screen widget -->
+    <string name="widget_online">Connected</string>
+    <string name="widget_offline">Offline</string>
+    <string name="widget_start">Start</string>
+    <string name="widget_stop">Stop</string>
+
     <!-- Capabilities-permissions screen -->
     <string name="caps_permissions_title">Capabilities</string>
     <string name="caps_subtitle_fmt">Location/mic/contacts: %1$d of %2$d on</string>
@@ -224,6 +230,7 @@
     <string name="attach_button">Attach file</string>
     <string name="attach_photo">Photo or video</string>
     <string name="attach_camera_photo">Take photo</string>
+    <string name="camera_capture_failed">Could not start the camera</string>
     <string name="attach_file">Any file</string>
     <string name="attachment_image_desc">Attached image %1$s</string>
     <string name="attachment_video_badge">Video</string>

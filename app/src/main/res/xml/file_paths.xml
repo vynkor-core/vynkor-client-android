@@ -6,4 +6,7 @@
     <files-path
         name="project_files"
         path="project_files/" />
+    <cache-path
+        name="camera"
+        path="camera/" />
 </paths>
