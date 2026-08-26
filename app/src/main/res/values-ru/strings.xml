@@ -302,4 +302,32 @@
     <string name="language_system">Как в системе</string>
     <string name="language_english">English</string>
     <string name="language_russian">Русский</string>
+
+    <!-- Onboarding wizard -->
+    <string name="setup_welcome_body">Этот телефон станет агентом устройства для вашего vynkor-хоста: ИИ на хосте сможет использовать микрофон, камеру, геолокацию и другое — вы решаете, что разрешено.</string>
+    <string name="setup_scan_button">Сканировать QR паринга</string>
+    <string name="setup_manual_button">Ввести вручную</string>
+    <string name="setup_skip_button">Позже</string>
+    <string name="setup_perms_title">Разрешения</string>
+    <string name="setup_perms_hint">Всё здесь необязательно. Без разрешения соответствующая возможность выключена — остальное работает как обычно.</string>
+    <string name="setup_perms_continue">Продолжить</string>
+    <string name="wizard_perm_camera_title">Камера</string>
+    <string name="wizard_perm_camera_subtitle">QR-паринг и съёмка фото</string>
+    <string name="wizard_perm_location_title">Геолокация</string>
+    <string name="wizard_perm_location_subtitle">гео и названия сетей Wi-Fi</string>
+    <string name="wizard_perm_mic_title">Микрофон</string>
+    <string name="wizard_perm_mic_subtitle">диктовка и голосовой чат</string>
+    <string name="wizard_perm_contacts_title">Контакты</string>
+    <string name="wizard_perm_contacts_subtitle">поиск контактов по имени</string>
+    <string name="wizard_perm_notif_title">Уведомления</string>
+    <string name="wizard_perm_notif_subtitle">показывать статус подключения</string>
+    <string name="wizard_perm_granted">Выдано</string>
+    <string name="wizard_perm_missing">Нажмите, чтобы выдать</string>
+    <string name="setup_done_title">Готово!</string>
+    <string name="setup_done_body">Телефон подключён к хосту как агент устройства.</string>
+    <string name="setup_done_open">Открыть vynkor</string>
+    <string name="wizard_skip_confirm_title">Пропустить настройку?</string>
+    <string name="wizard_skip_confirm_body">Сопрячься можно позже: Настройки → Хосты.</string>
+    <string name="wizard_skip_yes">Пропустить</string>
+    <string name="wizard_skip_no">Продолжить настройку</string>
 </resources>

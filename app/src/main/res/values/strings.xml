@@ -302,4 +302,32 @@
     <string name="language_system">System default</string>
     <string name="language_english">English</string>
     <string name="language_russian">Русский</string>
+
+    <!-- Onboarding wizard -->
+    <string name="setup_welcome_body">This phone becomes a device-agent for your vynkor host: the AI on the host can use its mic, camera, location and more — you control what is allowed.</string>
+    <string name="setup_scan_button">Scan pairing QR</string>
+    <string name="setup_manual_button">Enter manually</string>
+    <string name="setup_skip_button">Skip for now</string>
+    <string name="setup_perms_title">Permissions</string>
+    <string name="setup_perms_hint">Everything here is optional. Without a grant the matching capability stays off — the rest of the agent keeps working.</string>
+    <string name="setup_perms_continue">Continue</string>
+    <string name="wizard_perm_camera_title">Camera</string>
+    <string name="wizard_perm_camera_subtitle">QR pairing and photo capture</string>
+    <string name="wizard_perm_location_title">Location</string>
+    <string name="wizard_perm_location_subtitle">geo capability and Wi-Fi names</string>
+    <string name="wizard_perm_mic_title">Microphone</string>
+    <string name="wizard_perm_mic_subtitle">dictation and voice chat</string>
+    <string name="wizard_perm_contacts_title">Contacts</string>
+    <string name="wizard_perm_contacts_subtitle">contact lookup by name</string>
+    <string name="wizard_perm_notif_title">Notifications</string>
+    <string name="wizard_perm_notif_subtitle">show the connection status notice</string>
+    <string name="wizard_perm_granted">Granted</string>
+    <string name="wizard_perm_missing">Tap to grant</string>
+    <string name="setup_done_title">You are set!</string>
+    <string name="setup_done_body">The phone is connected to your host as a device-agent.</string>
+    <string name="setup_done_open">Open vynkor</string>
+    <string name="wizard_skip_confirm_title">Skip setup?</string>
+    <string name="wizard_skip_confirm_body">You can pair later from Settings → Hosts.</string>
+    <string name="wizard_skip_yes">Skip</string>
+    <string name="wizard_skip_no">Continue setup</string>
 </resources>

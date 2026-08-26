@@ -77,6 +77,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * First launch with no host profile → onboarding wizard (IDEAS #6).
+     * Skipped permanently once a profile exists or the user opted out.
+     */
+    private fun maybeLaunchWizard() {
+        if (!AppPrefs.wizardCompleted(this) && ProfileStore.list(this).isEmpty()) {
+            startActivity(Intent(this, SetupActivity::class.java))
+        }
+    }
+
     private fun scanOptions() = com.journeyapps.barcodescanner.ScanOptions()
         .setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
         .setPrompt(getString(R.string.scan_prompt))
@@ -84,6 +94,7 @@ class MainActivity : AppCompatActivity() {
         .setOrientationLocked(true)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        maybeLaunchWizard()
         AppPrefs.applyTheme(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

@@ -54,6 +54,16 @@ object AppPrefs {
         prefs(context).edit().putString(KEY_NOTIF_MODE, value).apply()
     }
 
+    /** First-launch onboarding shown until a profile exists or user skips. */
+    const val KEY_WIZARD_DONE = "setup_wizard_done"
+
+    fun wizardCompleted(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_WIZARD_DONE, false)
+
+    fun setWizardCompleted(context: Context) {
+        prefs(context).edit().putBoolean(KEY_WIZARD_DONE, true).apply()
+    }
+
     /** Theme overlay resource for the chosen accent (blue = base theme). */
     fun accentThemeRes(context: Context): Int = when (accent(context)) {
         ACCENT_GREEN -> R.style.Theme_Vynkor_AccentGreen
