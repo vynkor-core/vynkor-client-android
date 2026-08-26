@@ -7,14 +7,14 @@
     android:gravity="center_vertical"
     android:orientation="horizontal"
     android:paddingStart="14dp"
-    android:paddingEnd="8dp">
+    android:paddingEnd="10dp">
 
     <ImageView
-        android:id="@+id/widgetIcon"
-        android:layout_width="22dp"
-        android:layout_height="22dp"
-        android:contentDescription="@null"
-        android:src="@drawable/ic_stat_vynkor" />
+        android:id="@+id/widgetDot"
+        android:layout_width="10dp"
+        android:layout_height="10dp"
+        android:importantForAccessibility="no"
+        android:src="@drawable/widget_dot" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -29,7 +29,7 @@
             android:layout_height="wrap_content"
             android:maxLines="1"
             android:text="@string/tile_label"
-            android:textColor="#E6E1E5"
+            android:textColor="@color/widget_text_primary"
             android:textSize="13sp"
             android:textStyle="bold" />
 
@@ -39,7 +39,7 @@
             android:layout_height="wrap_content"
             android:maxLines="1"
             android:text="@string/widget_offline"
-            android:textColor="#948F99"
+            android:textColor="@color/widget_text_secondary"
             android:textSize="12sp" />
     </LinearLayout>
 
@@ -47,11 +47,11 @@
         android:id="@+id/widgetToggle"
         android:layout_width="wrap_content"
         android:layout_height="36dp"
-        android:paddingStart="14dp"
-        android:paddingEnd="14dp"
-        android:background="@drawable/widget_button_bg"
+        android:background="@drawable/widget_button_pill"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
         android:text="@string/widget_start"
         android:textAllCaps="false"
-        android:textColor="#E6E1E5"
+        android:textColor="@color/widget_btn_text"
         android:textSize="12sp" />
 </LinearLayout>

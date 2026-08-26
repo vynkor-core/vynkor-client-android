@@ -56,6 +56,7 @@ class AgentService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        current = this
         createChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
     }
@@ -192,6 +193,7 @@ class AgentService : Service() {
     }
 
     override fun onDestroy() {
+        current = null
         stopAgent()
         super.onDestroy()
     }
@@ -203,9 +205,27 @@ class AgentService : Service() {
                 CHANNEL_ID, getString(R.string.service_channel_name), NotificationManager.IMPORTANCE_LOW
             )
         )
+        // "Hidden" mode target: IMPORTANCE_MIN collapses the notice to the
+        // bottom section with no heads-up, sound or lock-screen presence.
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_QUIET,
+                getString(R.string.service_channel_quiet_name),
+                NotificationManager.IMPORTANCE_MIN,
+            )
+        )
     }
 
+    /**
+     * Detail level follows AppPrefs.notifMode: detailed = status line +
+     * actions; minimal = title only on the regular channel; hidden = title
+     * only on the IMPORTANCE_MIN channel (as invisible as a foreground
+     * service legally gets).
+     */
     private fun buildNotification(): Notification {
+        val mode = dev.vynkor.agent.agent.AppPrefs.notifMode(this)
+        val detailed = mode == dev.vynkor.agent.agent.AppPrefs.NOTIF_DETAILED
+        val channel = if (mode == dev.vynkor.agent.agent.AppPrefs.NOTIF_HIDDEN) CHANNEL_QUIET else CHANNEL_ID
         val stopIntent = PendingIntent.getService(
             this, 0, Intent(this, AgentService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -221,9 +241,8 @@ class AgentService : Service() {
                 .putExtra(ChatActivity.EXTRA_NEW_CHAT, true),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, channel)
             .setContentTitle(getString(R.string.service_notification_title))
-            .setContentText(connectionLine ?: getString(R.string.service_notification_text))
             .setSmallIcon(R.drawable.ic_stat_vynkor)
             .setColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary))
             .setContentIntent(openIntent)
@@ -231,14 +250,26 @@ class AgentService : Service() {
             .setLocalOnly(true)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .addAction(0, getString(R.string.notification_new_chat), newChatIntent)
-            .addAction(0, getString(R.string.disconnect_button), stopIntent)
-            .build()
+        if (detailed) {
+            builder.setContentText(connectionLine ?: getString(R.string.service_notification_text))
+                .addAction(0, getString(R.string.notification_new_chat), newChatIntent)
+                .addAction(0, getString(R.string.disconnect_button), stopIntent)
+        }
+        return builder.build()
     }
 
     companion object {
         private const val TAG = "AgentService"
         private const val CHANNEL_ID = "vynkor_agent"
+        private const val CHANNEL_QUIET = "vynkor_agent_quiet"
+
+        @Volatile
+        private var current: AgentService? = null
+
+        /** Re-renders the running notification after a pref change. */
+        fun refreshNotification(context: Context) {
+            current?.updateNotification()
+        }
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "dev.vynkor.agent.STOP"
 

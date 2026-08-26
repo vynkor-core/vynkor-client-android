@@ -165,30 +165,6 @@
                 android:resource="@xml/agent_status_widget_info" />
         </receiver>
 
-        <!-- 2×2 action grid: chat / voice / camera / agent toggle. -->
-        <receiver
-            android:name=".ActionGridWidget"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/action_grid_widget_info" />
-        </receiver>
-
-        <!-- 4×1 quick actions: torch / DND / ringer cycle / agent toggle. -->
-        <receiver
-            android:name=".QuickActionsWidget"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/quick_actions_widget_info" />
-        </receiver>
-
         <service
             android:name=".notifications.NotificationListener"
             android:exported="true"

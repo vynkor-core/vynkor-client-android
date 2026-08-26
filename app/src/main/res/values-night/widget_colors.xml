@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget palette, dark variant. -->
+    <color name="widget_surface">#292932</color>
+    <color name="widget_text_primary">#E6E1E5</color>
+    <color name="widget_text_secondary">#948F99</color>
+    <color name="widget_btn_bg">#4A4458</color>
+    <color name="widget_btn_text">#E6E1E5</color>
+    <color name="widget_btn_stop_text">#F2B8B5</color>
+</resources>

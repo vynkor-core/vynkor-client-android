@@ -104,12 +104,9 @@ stay on the device.
 
 ## Quick access
 
-* **Home-screen widgets** (three variants):
-  * *Actions* (2×2) — Chat / **Voice** / **Camera** tiles: tap opens the chat and
-    immediately starts dictation or a camera capture; plus an Agent start/stop tile.
-  * *Status* (2×1) — agent state + host name; tap opens the chat, button starts/stops;
-  * *Quick actions* (4×1) — torch / DND / ringer cycle / agent toggle, no app needed
-    (DND without the policy grant deep-links to its settings screen).
+* **Home-screen widget** (3×1): live agent status (accent-colored dot +
+  host name) and a Start/Stop button; tap anywhere else opens the chat.
+  Follows the in-app accent theme and system dark mode.
 * Quick Settings tile “vynkor agent” — one-tap start/stop of the agent.
 * Long-press launcher icon → *New chat* shortcut.
 * Share-to-app: text shared from other apps lands in the composer.
@@ -128,7 +125,11 @@ While locked, content is hidden from screenshots/recents (`FLAG_SECURE`).
 ## Live status & telemetry
 
 The foreground notification mirrors the connection state
-(Connecting… / Connected to `<host>` / Reconnecting…). Settings and the
+(Connecting… / Connected to `<host>` / Reconnecting…). Its detail level is
+configurable in Settings → **Service notification**: *Detailed* (status line
++ New chat/Disconnect actions), *Minimal* (title only), or *Hidden*
+(silent IMPORTANCE_MIN channel — collapsed to the bottom section, the least
+intrusive a foreground-service notice can legally be). Settings and the
 drawer show fine-grained status incl. the failure reason
 (`Host unreachable — <reason>`, red) while dialing; the Connect button turns
 into an honest **Stop** during retries. Battery level and charging

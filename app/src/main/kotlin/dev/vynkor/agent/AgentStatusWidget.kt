@@ -55,21 +55,40 @@ class AgentStatusWidget : AppWidgetProvider() {
             val online = running()
             val host = dev.vynkor.agent.agent.ProfileStore.active(context)?.name?.ifBlank { null }
             val statusLine = when {
-                online && host != null -> context.getString(R.string.widget_online_host_fmt, host.take(16))
+                online && host != null -> context.getString(R.string.widget_online_host_fmt, host.take(20))
                 online -> context.getString(R.string.widget_online)
                 else -> context.getString(R.string.widget_offline)
             }
             return RemoteViews(context.packageName, R.layout.agent_status_widget).apply {
-                setTextColor(R.id.widgetStatus, if (online) accent else 0xFF948F99.toInt())
-                setTextViewText(R.id.widgetStatus, statusLine)
-                setTextViewText(
-                    R.id.widgetToggle,
-                    context.getString(if (online) R.string.widget_stop else R.string.widget_start),
+                // ImageView.setColorFilter(int) is reflection-safe on every API.
+                setInt(R.id.widgetDot, "setColorFilter", if (online) accent else GRAY)
+                setTextColor(
+                    R.id.widgetStatus,
+                    androidx.core.content.ContextCompat.getColor(
+                        context,
+                        if (online) R.color.widget_text_primary else R.color.widget_text_secondary,
+                    ),
                 )
+                setTextViewText(R.id.widgetStatus, statusLine)
+                if (online) {
+                    setTextViewText(R.id.widgetToggle, context.getString(R.string.widget_stop))
+                    setTextColor(
+                        R.id.widgetToggle,
+                        androidx.core.content.ContextCompat.getColor(context, R.color.widget_btn_stop_text),
+                    )
+                } else {
+                    setTextViewText(R.id.widgetToggle, context.getString(R.string.widget_start))
+                    setTextColor(
+                        R.id.widgetToggle,
+                        androidx.core.content.ContextCompat.getColor(context, R.color.widget_btn_text),
+                    )
+                }
                 setOnClickPendingIntent(R.id.widgetToggle, togglePendingIntent(context))
                 setOnClickPendingIntent(R.id.widgetRoot, openAppPendingIntent(context))
             }
         }
+
+        private const val GRAY = 0xFF948F99.toInt()
 
         private fun togglePendingIntent(context: Context): PendingIntent =
             PendingIntent.getBroadcast(

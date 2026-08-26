@@ -16,6 +16,7 @@ object AppPrefs {
     private const val KEY_TYPEWRITER = "typewriter_enabled"
     private const val KEY_HAPTICS = "haptics_enabled"
     private const val KEY_MUTED_PACKAGES = "muted_notification_packages"
+    private const val KEY_NOTIF_MODE = "service_notification_mode"
 
     const val THEME_SYSTEM = "system"
     const val THEME_LIGHT = "light"
@@ -39,6 +40,18 @@ object AppPrefs {
 
     fun setAccent(context: Context, value: String) {
         prefs(context).edit().putString(KEY_ACCENT, value).apply()
+    }
+
+    /** Service-notification detail level: see [MODE_*] constants. */
+    const val NOTIF_DETAILED = "detailed"
+    const val NOTIF_MINIMAL = "minimal"
+    const val NOTIF_HIDDEN = "hidden"
+
+    fun notifMode(context: Context): String =
+        prefs(context).getString(KEY_NOTIF_MODE, NOTIF_DETAILED) ?: NOTIF_DETAILED
+
+    fun setNotifMode(context: Context, value: String) {
+        prefs(context).edit().putString(KEY_NOTIF_MODE, value).apply()
     }
 
     /** Theme overlay resource for the chosen accent (blue = base theme). */

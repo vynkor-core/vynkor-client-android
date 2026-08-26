@@ -6,7 +6,5 @@ import android.content.Context
 object WidgetSync {
     fun pushAll(context: Context) {
         AgentStatusWidget.pushAll(context)
-        ActionGridWidget.pushAll(context)
-        QuickActionsWidget.pushAll(context)
     }
 }

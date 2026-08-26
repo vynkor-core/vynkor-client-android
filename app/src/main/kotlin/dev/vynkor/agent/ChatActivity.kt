@@ -1677,7 +1677,7 @@ class ChatActivity : AppCompatActivity() {
         private const val STATE_CHAT_ID = "state_chat_id"
         private const val STATE_SEARCH = "state_search"
 
-        /** Widget deep actions (ActionGridWidget). */
+        /** Widget/shortcut deep actions (voice or camera right after unlock). */
         const val EXTRA_AUTO_ACTION = "auto_action"
         const val EXTRA_NEW_CHAT = "extra_new_chat"
         const val AUTO_VOICE = "voice"
