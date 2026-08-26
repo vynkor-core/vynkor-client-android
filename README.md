@@ -119,8 +119,9 @@ Licensed under either of [LICENSE-APACHE](LICENSE-APACHE) or
 
 ## App lock
 
-Cold-starting the app requires fingerprint (device PIN as fallback) before
-the agent UI is reachable — it holds host credentials and device data.
+Off by default. Enabled in **Settings → Security**, it then requires
+fingerprint (device PIN as fallback) on cold start before the agent UI is
+reachable — it holds host credentials and device data.
 Returning after ≥ 5 minutes in background re-locks the app. Devices with no
 enrolled authenticator pass through; cancelling the prompt closes the app.
 While locked, content is hidden from screenshots/recents (`FLAG_SECURE`).
