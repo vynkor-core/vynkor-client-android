@@ -142,40 +142,27 @@ class HostsActivity : AppCompatActivity() {
     }
 
     /**
-     * R-02: an in-app QR scan is the trusted physical channel and applies
-     * directly. Any other entry point (VIEW intent from another app) must be
-     * confirmed by the user before anything is saved or connected.
+     * R-02: in-app scans apply directly, VIEW-intents go through the shared
+     * confirm dialog (PairingApplier).
      */
     private fun onPairingPayload(raw: String, external: Boolean) {
-        val profile = when (val result = PairingPayload.parseWithReason(raw)) {
-            is PairingPayload.Result.Ok -> result.profile
-            is PairingPayload.Result.Invalid -> {
-                // E-01: v1 payloads carry the host master secret — the reason
-                // says exactly that instead of a generic "invalid"
-                Toast.makeText(this, result.reason, Toast.LENGTH_LONG).show()
-                return
+        when (val decision = PairingApplier.handle(this, raw, external) { applied ->
+            refresh()
+            Toast.makeText(
+                this,
+                getString(R.string.paired_and_connected, applied.name),
+                Toast.LENGTH_SHORT,
+            ).show()
+            if (AgentHolder.agent == null) {
+                startServiceAfterPermissions()
             }
-        }
-        if (!external) {
-            applyPairing(profile)
-            return
-        }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.pair_confirm_title)
-            .setMessage(getString(R.string.pair_confirm_message, profile.hostUrl, profile.deviceId))
-            .setPositiveButton(R.string.pair_confirm_yes) { _, _ -> applyPairing(profile) }
-            .setNegativeButton(R.string.pair_confirm_no, null)
-            .show()
-    }
-
-    private fun applyPairing(profile: HostProfile) {
-        DeviceIdentity.setDeviceId(this, profile.deviceId)
-        ProfileStore.save(this, profile)
-        ProfileStore.setActive(this, profile.id)
-        refresh()
-        Toast.makeText(this, getString(R.string.paired_and_connected, profile.name), Toast.LENGTH_SHORT).show()
-        if (AgentHolder.agent == null) {
-            startServiceAfterPermissions()
+        }) {
+            is PairingApplier.Decision.Applied -> Unit
+            is PairingApplier.Decision.PendingConfirmation -> Unit
+            // E-01: v1 payloads carry the host master secret — the reason
+            // says exactly that instead of a generic "invalid"
+            is PairingApplier.Decision.Rejected ->
+                Toast.makeText(this, decision.reason, Toast.LENGTH_LONG).show()
         }
     }
 

@@ -51,7 +51,7 @@ class AgentStatusWidget : AppWidgetProvider() {
             AgentHolder.agent != null && AgentHolder.connectionState.value
 
         private fun views(context: Context): RemoteViews {
-            val accent = ContextCompat.getColor(context, R.color.primary)
+            val accent = WidgetAccent.color(context)
             val online = running()
             val host = dev.vynkor.agent.agent.ProfileStore.active(context)?.name?.ifBlank { null }
             val statusLine = when {

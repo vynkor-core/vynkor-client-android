@@ -166,7 +166,14 @@ class ChatAdapter(
                     binding.messageText.setTextColor(color(R.color.on_surface))
                     binding.footerRow.visibility = View.VISIBLE
                     val tint = color(R.color.on_surface_variant)
-                    val activeTint = if (isSpeaking) color(R.color.primary) else tint
+                    val activeTint = if (isSpeaking) {
+                        com.google.android.material.color.MaterialColors.getColor(
+                            itemView,
+                            com.google.android.material.R.attr.colorPrimary,
+                        )
+                    } else {
+                        tint
+                    }
                     listOf(
                         binding.copyAction,
                         binding.moreAction,

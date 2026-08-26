@@ -28,7 +28,6 @@ import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.agent.ProfileStore
 import dev.vynkor.agent.agent.SecurityStore
 import dev.vynkor.agent.databinding.ActivityMainBinding
-import dev.vynkor.agent.databinding.DialogChatBehaviorBinding
 import dev.vynkor.agent.databinding.ItemSettingsRowBinding
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -43,6 +42,46 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var pendingServiceStart = false
+
+    private val mainScanLauncher = registerForActivityResult(
+        com.journeyapps.barcodescanner.ScanContract(),
+    ) { result ->
+        if (result.contents == null) return@registerForActivityResult
+        when (val decision = PairingApplier.handle(this, result.contents, external = false) { _ ->
+            Toast.makeText(
+                this,
+                getString(R.string.paired_and_connected_short),
+                Toast.LENGTH_SHORT,
+            ).show()
+            startServiceAfterPermissions()
+            refresh()
+        }) {
+            is PairingApplier.Decision.Applied -> Unit
+            is PairingApplier.Decision.PendingConfirmation -> Unit
+            is PairingApplier.Decision.Rejected ->
+                Toast.makeText(this, decision.reason, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private val mainCameraLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            mainScanLauncher.launch(scanOptions())
+        } else {
+            Snackbar.make(
+                findViewById(android.R.id.content),
+                R.string.camera_denied,
+                Snackbar.LENGTH_LONG,
+            ).show()
+        }
+    }
+
+    private fun scanOptions() = com.journeyapps.barcodescanner.ScanOptions()
+        .setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
+        .setPrompt(getString(R.string.scan_prompt))
+        .setBeepEnabled(false)
+        .setOrientationLocked(true)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppPrefs.applyTheme(this)
@@ -67,7 +106,7 @@ class MainActivity : AppCompatActivity() {
             .setOnClickListener { showAppearanceDialog() }
 
         bindRow(binding.rowChat, R.drawable.ic_tune, R.string.chat_behavior_title)
-            .setOnClickListener { showChatBehaviorDialog() }
+            .setOnClickListener { startActivity(Intent(this, ChatSettingsActivity::class.java)) }
 
         bindRow(binding.rowSecurity, R.drawable.ic_lock, R.string.security_title)
             .setOnClickListener { startActivity(Intent(this, SecurityActivity::class.java)) }
@@ -76,7 +115,17 @@ class MainActivity : AppCompatActivity() {
             .setOnClickListener { showDataDialog() }
 
         bindRow(binding.rowAbout, R.drawable.ic_info, R.string.about_row)
-            .setOnClickListener { showAbout() }
+            .setOnClickListener { startActivity(Intent(this, AboutActivity::class.java)) }
+
+        binding.scanQr.setOnClickListener {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                mainScanLauncher.launch(scanOptions())
+            } else {
+                mainCameraLauncher.launch(Manifest.permission.CAMERA)
+            }
+        }
 
         binding.connect.setOnClickListener {
             if (AgentHolder.agent != null) {
@@ -172,42 +221,117 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAppearanceDialog() {
-        val values = arrayOf(AppPrefs.THEME_SYSTEM, AppPrefs.THEME_LIGHT, AppPrefs.THEME_DARK)
-        val labels = arrayOf(
+        val themes = arrayOf(AppPrefs.THEME_SYSTEM, AppPrefs.THEME_LIGHT, AppPrefs.THEME_DARK)
+        val themeLabels = arrayOf(
             getString(R.string.theme_system),
             getString(R.string.theme_light),
             getString(R.string.theme_dark),
         )
+        val accents = arrayOf(
+            AppPrefs.ACCENT_BLUE,
+            AppPrefs.ACCENT_GREEN,
+            AppPrefs.ACCENT_PURPLE,
+            AppPrefs.ACCENT_ORANGE,
+            AppPrefs.ACCENT_ROSE,
+        )
+        val accentLabels = arrayOf(
+            getString(R.string.accent_blue),
+            getString(R.string.accent_green),
+            getString(R.string.accent_purple),
+            getString(R.string.accent_orange),
+            getString(R.string.accent_rose),
+        )
+
+        val container = androidx.appcompat.widget.LinearLayoutCompat(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            val pad = (8 * resources.displayMetrics.density).toInt()
+            setPadding(pad, 0, pad, 0)
+        }
+        val themeTitle = android.widget.TextView(this).apply {
+            setText(R.string.appearance_theme_section)
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleSmall)
+            setPadding((24 * resources.displayMetrics.density).toInt(), (12 * resources.displayMetrics.density).toInt(), 0, (4 * resources.displayMetrics.density).toInt())
+        }
+        container.addView(themeTitle)
+        val themeGroup = android.widget.RadioGroup(this)
+        themes.forEachIndexed { i, value ->
+            themeGroup.addView(android.widget.RadioButton(this).apply {
+                id = android.view.View.generateViewId()
+                text = themeLabels[i]
+                isChecked = AppPrefs.theme(this@MainActivity) == value
+                setOnClickListener {
+                    if (AppPrefs.theme(this@MainActivity) != value) {
+                        AppPrefs.setTheme(this@MainActivity, value)
+                        AppPrefs.applyTheme(this@MainActivity)
+                        recreate()
+                    }
+                }
+            })
+        }
+        container.addView(themeGroup)
+
+        val accentTitle = android.widget.TextView(this).apply {
+            setText(R.string.appearance_accent_section)
+            setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleSmall)
+            setPadding((24 * resources.displayMetrics.density).toInt(), (12 * resources.displayMetrics.density).toInt(), 0, (4 * resources.displayMetrics.density).toInt())
+        }
+        container.addView(accentTitle)
+        val accentRow = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, 0)
+        }
+        val accentColors = intArrayOf(
+            R.color.primary,
+            R.color.acc_green_primary,
+            R.color.acc_purple_primary,
+            R.color.acc_orange_primary,
+            R.color.acc_rose_primary,
+        )
+        accents.forEachIndexed { i, value ->
+            val selected = AppPrefs.accent(this) == value
+            accentRow.addView(
+                android.view.View(this).apply {
+                    layoutParams = android.widget.LinearLayout.LayoutParams(
+                        (36 * resources.displayMetrics.density).toInt(),
+                        (36 * resources.displayMetrics.density).toInt(),
+                    ).apply {
+                        marginEnd = (10 * resources.displayMetrics.density).toInt()
+                    }
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor(
+                            androidx.core.content.ContextCompat.getColor(
+                                this@MainActivity,
+                                accentColors[i],
+                            ),
+                        )
+                        setStroke(
+                            (if (selected) 6 else 2) * resources.displayMetrics.density.toInt().coerceAtLeast(1),
+                            android.graphics.Color.WHITE,
+                        )
+                    }
+                    contentDescription = accentLabels[i]
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener {
+                        if (AppPrefs.accent(this@MainActivity) != value) {
+                            AppPrefs.setAccent(this@MainActivity, value)
+                            recreate()
+                        }
+                    }
+                },
+            )
+        }
+        container.addView(accentRow)
+
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.appearance_title)
-            .setSingleChoiceItems(labels, values.indexOf(AppPrefs.theme(this))) { dialog, which ->
-                dialog.dismiss()
-                AppPrefs.setTheme(this, values[which])
-                // Default-night-mode change recreates the activity itself.
-                AppPrefs.applyTheme(this)
-                refresh()
-            }
-            .show()
-    }
-
-    private fun showChatBehaviorDialog() {
-        val binding = DialogChatBehaviorBinding.inflate(layoutInflater)
-        binding.typewriterToggle.isChecked = AppPrefs.typewriterEnabled(this)
-        binding.hapticsToggle.isChecked = AppPrefs.hapticsEnabled(this)
-        binding.typewriterToggle.setOnCheckedChangeListener { _, checked ->
-            AppPrefs.setTypewriterEnabled(this, checked)
-            refresh()
-        }
-        binding.hapticsToggle.setOnCheckedChangeListener { _, checked ->
-            AppPrefs.setHapticsEnabled(this, checked)
-            refresh()
-        }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.chat_behavior_title)
-            .setView(binding.root)
+            .setView(container)
             .setPositiveButton(android.R.string.ok, null)
             .show()
     }
+
 
     // ---------------------------------------------------------------- data
 
@@ -388,17 +512,15 @@ class MainActivity : AppCompatActivity() {
         return getString(if (s.hasPin) R.string.security_subtitle_pin else R.string.security_subtitle_bio)
     }
 
-    private fun showAbout() {
-        AlertDialog.Builder(this)
-            .setTitle(getString(R.string.app_name))
-            .setMessage(getString(R.string.about_body, BuildConfig.VERSION_NAME))
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
-    }
 
     private fun bindRow(row: ItemSettingsRowBinding, iconRes: Int, titleRes: Int): View {
         row.rowIcon.setImageResource(iconRes)
-        row.rowIcon.imageTintList = ContextCompat.getColorStateList(this, R.color.primary)
+        row.rowIcon.imageTintList = android.content.res.ColorStateList.valueOf(
+            com.google.android.material.color.MaterialColors.getColor(
+                row.root,
+                com.google.android.material.R.attr.colorPrimary,
+            ),
+        )
         row.rowTitle.setText(titleRes)
         return row.root
     }

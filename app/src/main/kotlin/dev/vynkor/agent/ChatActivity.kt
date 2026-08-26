@@ -259,8 +259,6 @@ class ChatActivity : AppCompatActivity() {
         }
         input.doAfterTextChanged { updateComposerButtons() }
 
-        binding.modelChip.setOnClickListener { showModelPicker() }
-        binding.agentChip.setOnClickListener { showAgentPicker() }
         binding.attachButton.setOnClickListener { showAttachMenu() }
 
         binding.setUpHost.setOnClickListener {
@@ -305,6 +303,14 @@ class ChatActivity : AppCompatActivity() {
         updateHostState()
         refreshChatList()
         updateWelcome()
+        if (intent?.getBooleanExtra(EXTRA_NEW_CHAT, false) == true &&
+            savedInstanceState == null
+        ) {
+            chat = Chat(projectId = selectedProjectId.orEmpty())
+            adapter.submit(chat.messages)
+            refreshTitle()
+            updateWelcome()
+        }
         restoreState(savedInstanceState)
         applySharedText(savedInstanceState == null)
         autoConnect()
@@ -465,6 +471,9 @@ class ChatActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_NEW_CHAT, false)) {
+            loadChat(null)
+        }
         intent.getStringExtra(EXTRA_AUTO_ACTION)?.let { pendingAutoAction = it }
         tryRunAutoAction()
     }
@@ -493,26 +502,18 @@ class ChatActivity : AppCompatActivity() {
         val model = active?.effectiveModel()?.takeIf { it.isNotBlank() }
             ?: hostModels.firstOrNull { it.isDefault }?.id
             ?: ""
-        binding.modelChip.text = model
-        binding.modelChip.visibility =
-            if (model.isBlank()) View.GONE else View.VISIBLE
-        // R-20 (№30): make the model-switch affordance visible on the toolbar
-        // itself — the whole bar opens the picker.
         binding.toolbar.subtitle = model.ifBlank { null }
     }
 
     private fun refreshAgentChip() {
-        val chip = binding.agentChip
-        if (hostAgents.isEmpty()) {
-            chip.visibility = View.GONE
-            return
-        }
+        if (hostAgents.isEmpty()) return
         val agentId = profile?.aiAgent.orEmpty()
         val name = hostAgents.firstOrNull { it.id == agentId }?.name
             ?: hostAgents.firstOrNull { it.isDefault }?.name
             ?: agentId.ifBlank { getString(R.string.agent_fallback) }
-        chip.text = name
-        chip.visibility = View.VISIBLE
+        val model = profile?.effectiveModel().orEmpty()
+        binding.toolbar.subtitle =
+            if (model.isBlank()) name else "$model · $name"
     }
 
     /** Pull the host's model/agent lists (list_models/list_agents). */
@@ -556,6 +557,7 @@ class ChatActivity : AppCompatActivity() {
         binding.drawerProfileName.text =
             if (active == null) getString(R.string.no_profile)
             else active.name.ifBlank { getString(R.string.unnamed_profile) }
+        binding.drawerProfileName.setOnClickListener { showHostSwitcher() }
         renderProjectChips()
         val query = searchQuery.trim()
         val all = if (active == null || query.isEmpty()) {
@@ -567,6 +569,54 @@ class ChatActivity : AppCompatActivity() {
         binding.searchEmpty.visibility =
             if (query.isNotEmpty() && filtered.isEmpty()) View.VISIBLE else View.GONE
         drawerAdapter.submit(filtered, query = query.ifEmpty { null })
+    }
+
+    /**
+     * Tap the profile name in the drawer: pick another paired host without
+     * leaving the chat. Switching stops the old agent and starts a new one
+     * bound to the selected profile.
+     */
+    private fun showHostSwitcher() {
+        val profiles = ProfileStore.list(this)
+        if (profiles.isEmpty()) {
+            startActivity(Intent(this, HostsActivity::class.java))
+            return
+        }
+        val activeId = profile?.id
+        val labels = mutableListOf(getString(R.string.hosts_manage_row)).also { list ->
+            profiles.forEach { list += it.name.ifBlank { getString(R.string.unnamed_profile) } }
+        }
+        val ids = mutableListOf<String?>("manage").also { list ->
+            profiles.forEach { list += it.id }
+        }
+        val checked = ids.indexOf(activeId).coerceAtLeast(0)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.hosts_title)
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { dialog, which ->
+                dialog.dismiss()
+                when (val id = ids[which]) {
+                    "manage" -> startActivity(Intent(this, HostsActivity::class.java))
+                    null -> Unit
+                    else -> {
+                        if (id != activeId) switchHost(id)
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun switchHost(profileId: String) {
+        ProfileStore.setActive(this, profileId)
+        profile = ProfileStore.active(this)
+        AgentService.stop(this)
+        searchQuery = ""
+        binding.drawerSearch.setText("")
+        loadChat(null)
+        refreshModelChip()
+        refreshAgentChip()
+        updateHostState()
+        refreshChatList()
+        autoConnect()
     }
 
     // ------------------------------------------------------------- projects
@@ -1265,11 +1315,25 @@ class ChatActivity : AppCompatActivity() {
             action.setIconResource(R.drawable.ic_send)
             action.setIconTintResource(R.color.on_primary)
             action.backgroundTintList =
-                android.content.res.ColorStateList.valueOf(ContextCompat.getColor(this, R.color.primary))
+                android.content.res.ColorStateList.valueOf(
+                    com.google.android.material.color.MaterialColors.getColor(
+                        binding.composerCard,
+                        com.google.android.material.R.attr.colorPrimary,
+                    ),
+                )
             action.contentDescription = getString(R.string.send_button)
         } else {
             action.setIconResource(R.drawable.ic_mic)
-            action.setIconTintResource(if (dictating) R.color.error else R.color.primary)
+            if (dictating) {
+                action.setIconTintResource(R.color.error)
+            } else {
+                action.iconTint = android.content.res.ColorStateList.valueOf(
+                    com.google.android.material.color.MaterialColors.getColor(
+                        action,
+                        com.google.android.material.R.attr.colorPrimary,
+                    ),
+                )
+            }
             action.backgroundTintList = null
             action.contentDescription = getString(R.string.mic_button)
         }
@@ -1297,43 +1361,18 @@ class ChatActivity : AppCompatActivity() {
             .show()
     }
 
-    // ----------------------------------------------------- agent switcher
-
-    private fun showAgentPicker() {
-        if (hostAgents.isEmpty()) return
-        val names = hostAgents.map { it.name }
-        val current = hostAgents.indexOfFirst { it.id == profile?.aiAgent }
-        MaterialAlertDialogBuilder(this)
-            .setTitle(R.string.agent_picker_title)
-            .setSingleChoiceItems(names.toTypedArray(), current) { dialog, which ->
-                dialog.dismiss()
-                saveAgent(hostAgents[which].id)
-            }
-            .show()
-    }
-
-    private fun saveAgent(agentId: String) {
-        val active = profile ?: return
-        val updated = active.copy(aiAgent = agentId)
-        profile = updated
-        ProfileStore.save(this, updated)
-        refreshAgentChip()
-        Toast.makeText(this, getString(R.string.agent_switched, agentName(agentId)), Toast.LENGTH_SHORT).show()
-    }
-
-    private fun agentName(agentId: String): String =
-        hostAgents.firstOrNull { it.id == agentId }?.name ?: agentId
-
     private fun customModelDialog() {
         val active = profile ?: return
-        val input = EditText(this)
-        input.hint = getString(R.string.ai_model_hint)
-        input.setText(active.aiModel)
-        input.setSelection(input.text.length)
-        val holder = FrameLayout(this)
-        val pad = (24 * resources.displayMetrics.density).toInt()
-        holder.setPadding(pad, pad, pad, 0)
-        holder.addView(input)
+        val input = EditText(this).apply {
+            hint = getString(R.string.ai_model_hint)
+            setText(active.aiModel)
+            setSelection(text.length)
+        }
+        val holder = FrameLayout(this).apply {
+            val pad = (24 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, 0)
+            addView(input)
+        }
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.custom_model)
             .setView(holder)
@@ -1640,6 +1679,7 @@ class ChatActivity : AppCompatActivity() {
 
         /** Widget deep actions (ActionGridWidget). */
         const val EXTRA_AUTO_ACTION = "auto_action"
+        const val EXTRA_NEW_CHAT = "extra_new_chat"
         const val AUTO_VOICE = "voice"
         const val AUTO_CAMERA = "camera"
 

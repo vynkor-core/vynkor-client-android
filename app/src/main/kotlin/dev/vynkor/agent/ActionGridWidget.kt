@@ -35,7 +35,7 @@ class ActionGridWidget : AppWidgetProvider() {
         private fun agentOn(): Boolean = AgentHolder.agent != null
 
         private fun views(context: Context): RemoteViews {
-            val accent = ContextCompat.getColor(context, R.color.primary)
+            val accent = WidgetAccent.color(context)
             return RemoteViews(context.packageName, R.layout.action_grid_widget).apply {
                 setTextViewText(
                     R.id.agAgentLabel,

@@ -92,6 +92,16 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
                     android:text="@string/connect_button" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/scanQr"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/scan_button"
+                    app:icon="@drawable/ic_search"
+                    app:iconGravity="textStart" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

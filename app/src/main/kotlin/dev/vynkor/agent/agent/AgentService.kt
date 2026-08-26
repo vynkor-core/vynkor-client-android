@@ -210,16 +210,28 @@ class AgentService : Service() {
             this, 0, Intent(this, AgentService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val contentIntent = PendingIntent.getActivity(
-            this, 0, Intent(this, ChatActivity::class.java),
+        val openIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, ChatActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val newChatIntent = PendingIntent.getActivity(
+            this, 1,
+            Intent(this, ChatActivity::class.java)
+                .putExtra(ChatActivity.EXTRA_NEW_CHAT, true),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.service_notification_title))
             .setContentText(connectionLine ?: getString(R.string.service_notification_text))
             .setSmallIcon(R.drawable.ic_stat_vynkor)
-            .setContentIntent(contentIntent)
+            .setColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary))
+            .setContentIntent(openIntent)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setLocalOnly(true)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
+            .addAction(0, getString(R.string.notification_new_chat), newChatIntent)
             .addAction(0, getString(R.string.disconnect_button), stopIntent)
             .build()
     }

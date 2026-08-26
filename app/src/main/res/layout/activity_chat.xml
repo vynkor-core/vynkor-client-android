@@ -267,7 +267,8 @@
                 android:scrollbars="vertical"
                 android:textAppearance="?attr/textAppearanceBodyLarge" />
 
-            <!-- Model chip + action row (Gemini pattern: plus-circle LEFT). -->
+            <!-- Action row: attach LEFT, mic/send RIGHT — model/agent live in
+                 the toolbar and chat settings, not here. -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -284,28 +285,10 @@
                     app:iconGravity="textStart"
                     app:iconTint="?attr/colorOnSurfaceVariant" />
 
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/agentChip"
-                    style="@style/Widget.Material3.Chip.Assist"
-                    android:layout_width="wrap_content"
-                    android:layout_height="36dp"
-                    android:checkable="false"
-                    android:text="@string/agent_fallback"
-                    android:textAppearance="?attr/textAppearanceLabelMedium" />
-
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/modelChip"
-                        style="@style/Widget.Material3.Chip.Assist"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:checkable="false"
-                        android:text="@string/model_fallback"
-                        android:textAppearance="?attr/textAppearanceLabelMedium" />
-
-                    <Space
-                        android:layout_width="0dp"
-                        android:layout_height="1dp"
-                        android:layout_weight="1" />
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/composerAction"
@@ -386,10 +369,10 @@
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="8dp"
             android:text="@string/new_chat"
-            android:textColor="@color/on_primary_container"
-            app:backgroundTint="@color/primary_container"
+            android:textColor="?attr/colorOnPrimaryContainer"
+            app:backgroundTint="?attr/colorPrimaryContainer"
             app:icon="@drawable/ic_add"
-            app:iconTint="@color/on_primary_container" />
+            app:iconTint="?attr/colorOnPrimaryContainer" />
 
         <TextView
             android:layout_width="match_parent"

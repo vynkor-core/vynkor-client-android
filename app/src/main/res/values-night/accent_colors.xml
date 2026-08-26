@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="acc_green_container">#0F3D14</color>
+    <color name="acc_green_on_container">#C8E6C9</color>
+
+    <color name="acc_purple_container">#2A1A5E</color>
+    <color name="acc_purple_on_container">#E3D8FF</color>
+
+    <color name="acc_orange_container">#4A2B00</color>
+    <color name="acc_orange_on_container">#FFE0B2</color>
+
+    <color name="acc_rose_container">#4E1029</color>
+    <color name="acc_rose_on_container">#FFD1E0</color>
+</resources>

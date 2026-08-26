@@ -103,6 +103,14 @@
             android:exported="false" />
 
         <activity
+            android:name=".ChatSettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AboutActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".SecurityActivity"
             android:exported="false" />
 

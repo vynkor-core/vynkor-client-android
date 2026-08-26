@@ -93,7 +93,7 @@ class QuickActionsWidget : AppWidgetProvider() {
             dev.vynkor.agent.agent.AgentHolder.agent != null
 
         private fun views(context: Context): RemoteViews {
-            val accent = ContextCompat.getColor(context, R.color.primary)
+            val accent = WidgetAccent.color(context)
             val torch = FlashlightProviderImpl(context)
             return RemoteViews(context.packageName, R.layout.quick_actions_widget).apply {
                 setTextViewText(

@@ -1,15 +1,18 @@
 package dev.vynkor.agent.agent
 
 import android.content.Context
+import dev.vynkor.agent.R
+import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 
 /**
  * App-wide preferences that are neither host profiles nor chat data:
- * theme, chat-behavior toggles and the notification forward filter.
+ * theme, accent, chat-behavior toggles and the notification forward filter.
  */
 object AppPrefs {
     private const val PREFS = "vynkor_prefs"
     private const val KEY_THEME = "theme"
+    private const val KEY_ACCENT = "accent"
     private const val KEY_TYPEWRITER = "typewriter_enabled"
     private const val KEY_HAPTICS = "haptics_enabled"
     private const val KEY_MUTED_PACKAGES = "muted_notification_packages"
@@ -18,6 +21,12 @@ object AppPrefs {
     const val THEME_LIGHT = "light"
     const val THEME_DARK = "dark"
 
+    const val ACCENT_BLUE = "blue"
+    const val ACCENT_GREEN = "green"
+    const val ACCENT_PURPLE = "purple"
+    const val ACCENT_ORANGE = "orange"
+    const val ACCENT_ROSE = "rose"
+
     fun theme(context: Context): String =
         prefs(context).getString(KEY_THEME, THEME_SYSTEM) ?: THEME_SYSTEM
 
@@ -25,15 +34,35 @@ object AppPrefs {
         prefs(context).edit().putString(KEY_THEME, value).apply()
     }
 
-    /** Call early in every activity's onCreate, before super.onCreate(). */
-    fun applyTheme(context: Context) {
+    fun accent(context: Context): String =
+        prefs(context).getString(KEY_ACCENT, ACCENT_BLUE) ?: ACCENT_BLUE
+
+    fun setAccent(context: Context, value: String) {
+        prefs(context).edit().putString(KEY_ACCENT, value).apply()
+    }
+
+    /** Theme overlay resource for the chosen accent (blue = base theme). */
+    fun accentThemeRes(context: Context): Int = when (accent(context)) {
+        ACCENT_GREEN -> R.style.Theme_Vynkor_AccentGreen
+        ACCENT_PURPLE -> R.style.Theme_Vynkor_AccentPurple
+        ACCENT_ORANGE -> R.style.Theme_Vynkor_AccentOrange
+        ACCENT_ROSE -> R.style.Theme_Vynkor_AccentRose
+        else -> 0
+    }
+
+    /**
+     * Call early in every activity's onCreate, before super.onCreate():
+     * applies the night mode and the accent overlay.
+     */
+    fun applyTheme(activity: AppCompatActivity) {
         AppCompatDelegate.setDefaultNightMode(
-            when (theme(context)) {
+            when (theme(activity)) {
                 THEME_LIGHT -> AppCompatDelegate.MODE_NIGHT_NO
                 THEME_DARK -> AppCompatDelegate.MODE_NIGHT_YES
                 else -> AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
             },
         )
+        activity.theme.applyStyle(accentThemeRes(activity), true)
     }
 
     fun typewriterEnabled(context: Context): Boolean =
