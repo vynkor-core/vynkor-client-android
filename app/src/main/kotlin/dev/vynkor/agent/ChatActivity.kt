@@ -337,6 +337,7 @@ class ChatActivity : AppCompatActivity() {
             updateWelcome()
         }
         restoreState(savedInstanceState)
+        WidgetSync.pushAll(this)
         intent?.getStringExtra(EXTRA_CHAT_ID)?.let { chatId ->
             profile?.let { p -> ChatStore.load(this, p.id, chatId) }?.let { loadChat(it) }
         }
@@ -399,30 +400,6 @@ class ChatActivity : AppCompatActivity() {
             }
         }
 
-        val engine = TtsEngine(this)
-        engine.onDone = {
-            runOnUiThread {
-                if (isDestroyed) return@runOnUiThread
-                hideTtsPill()
-                adapter.setSpeaking(null)
-                // Conversation mode: reply was read aloud — listen again.
-                if (AppPrefs.convMode(this)) {
-                    val idle = !busy &&
-                        AgentHolder.agent != null &&
-                        !recorder.isRecording() &&
-                        !sttPending &&
-                        !AgentHolder.micStreaming.value
-                    if (idle) startDictation()
-                }
-            }
-        }
-        engine.onInitFailed = {
-            runOnUiThread {
-                if (isDestroyed) return@runOnUiThread
-                snack(R.string.tts_unavailable)
-            }
-        }
-        tts = engine
         binding.ttsStop.setOnClickListener { stopSpeaking() }
     }
 
@@ -1544,8 +1521,52 @@ class ChatActivity : AppCompatActivity() {
         Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
     }
 
+    /**
+     * TTS is created on first actual use, not at activity creation: devices
+     * without a speech engine then only surface the failure when the user
+     * really asks to listen — not with a toast on every app entry.
+     */
+    private fun ttsEngine(): TtsEngine? {
+        tts?.let { return it }
+        if (ttsFailed) {
+            snack(R.string.tts_unavailable)
+            return null
+        }
+        val engine = TtsEngine(this)
+        engine.onDone = {
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                hideTtsPill()
+                adapter.setSpeaking(null)
+                // Conversation mode: reply was read aloud — listen again.
+                if (AppPrefs.convMode(this)) {
+                    val idle = !busy &&
+                        AgentHolder.agent != null &&
+                        !recorder.isRecording() &&
+                        !sttPending &&
+                        !AgentHolder.micStreaming.value
+                    if (idle) startDictation()
+                }
+            }
+        }
+        engine.onInitFailed = {
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                ttsFailed = true
+                tts?.shutdown()
+                tts = null
+                snack(R.string.tts_unavailable)
+            }
+        }
+        tts = engine
+        return engine
+    }
+
+    @Volatile
+    private var ttsFailed = false
+
     private fun toggleSpeak(message: ChatMessage) {
-        val engine = tts ?: return
+        val engine = ttsEngine() ?: return
         if (!engine.isReady()) {
             snack(R.string.tts_unavailable)
             return

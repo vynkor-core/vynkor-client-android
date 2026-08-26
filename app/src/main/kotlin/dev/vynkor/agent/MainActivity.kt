@@ -60,9 +60,12 @@ class MainActivity : AppCompatActivity() {
         .setOrientationLocked(true)
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        maybeLaunchWizard()
         AppPrefs.applyTheme(this)
         super.onCreate(savedInstanceState)
+        WidgetSync.pushAll(this)
+        // First launch with no profile -> wizard (kept after super so
+        // startActivity sees an attached activity).
+        maybeLaunchWizard()
         enableEdgeToEdge()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
