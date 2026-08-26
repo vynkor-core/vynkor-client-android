@@ -50,6 +50,17 @@ class ProjectChatsActivity : AppCompatActivity() {
         )
         binding.chatList.layoutManager = LinearLayoutManager(this)
         binding.chatList.adapter = adapter
+        ChatSwipe.attach(
+            binding.chatList,
+            chatAt = { pos ->
+                (adapter.currentList.getOrNull(pos) as? DrawerItem.ChatEntry)?.row?.chat
+            },
+            onPin = { chat ->
+                ChatStore.setPinned(this, profileId, chat.id, !chat.pinned)
+                refresh()
+            },
+            onDeleteAsk = { confirmDelete(it) },
+        )
 
         binding.newChat.setOnClickListener {
             val chat = Chat(projectId = projectId)

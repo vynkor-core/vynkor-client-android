@@ -84,6 +84,10 @@ class ChatActivity : AppCompatActivity() {
     private var profile: HostProfile? = null
     private lateinit var chat: Chat
     private var busy = false
+
+    /** Set by the composer Stop button; the pending reply is then dropped. */
+    @Volatile
+    private var generationAborted = false
     private var tts: TtsEngine? = null
 
     private var hostModels: List<AiModel> = emptyList()
@@ -246,6 +250,10 @@ class ChatActivity : AppCompatActivity() {
         // Single composer action slot: mic when empty/dictating, send when
         // there is text to send. Same position, icon swaps.
         binding.composerAction.setOnClickListener {
+            if (busy) {
+                abortGeneration()
+                return@setOnClickListener
+            }
             val hasText = input.text?.isNotBlank() == true
             val hasAttachments = pendingAttachments.isNotEmpty()
             val dictating = recorder.isRecording() || sttPending || AgentHolder.micStreaming.value
@@ -292,6 +300,19 @@ class ChatActivity : AppCompatActivity() {
         )
         drawerChats.layoutManager = LinearLayoutManager(this)
         drawerChats.adapter = drawerAdapter
+        ChatSwipe.attach(
+            drawerChats,
+            chatAt = { pos ->
+                (drawerAdapter.currentList.getOrNull(pos) as? DrawerItem.ChatEntry)?.row?.chat
+            },
+            onPin = { target ->
+                profile?.let {
+                    ChatStore.setPinned(this, it.id, target.id, !target.pinned)
+                }
+                refreshChatList()
+            },
+            onDeleteAsk = { confirmDelete(it) },
+        )
 
         // Drawer search: title + message contents, composed with the
         // selected project chip inside refreshChatList().
@@ -384,6 +405,15 @@ class ChatActivity : AppCompatActivity() {
                 if (isDestroyed) return@runOnUiThread
                 hideTtsPill()
                 adapter.setSpeaking(null)
+                // Conversation mode: reply was read aloud — listen again.
+                if (AppPrefs.convMode(this)) {
+                    val idle = !busy &&
+                        AgentHolder.agent != null &&
+                        !recorder.isRecording() &&
+                        !sttPending &&
+                        !AgentHolder.micStreaming.value
+                    if (idle) startDictation()
+                }
             }
         }
         engine.onInitFailed = {
@@ -1124,6 +1154,7 @@ class ChatActivity : AppCompatActivity() {
         val agent = AgentHolder.agent ?: return
 
         busy = true
+        generationAborted = false
         setBusyUi(true)
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -1139,6 +1170,12 @@ class ChatActivity : AppCompatActivity() {
                 }
                 runCatching { AiClient.chat(agent, active, messages) }
             }
+            if (generationAborted) {
+                // User stopped waiting; the answer is dropped on the floor.
+                busy = false
+                setBusyUi(false)
+                return@launch
+            }
             result.onSuccess { reply ->
                 val replyMessage = ChatMessage("assistant", reply.content)
                 appendMessage(replyMessage)
@@ -1153,6 +1190,20 @@ class ChatActivity : AppCompatActivity() {
             busy = false
             setBusyUi(false)
         }
+    }
+
+    /**
+     * Composer Stop: unlock the UI immediately and drop the reply when it
+     * eventually arrives. The request itself still completes host-side —
+     * a real cancel needs the kernel-side chat.cancel (see
+     * docs/CLIENT_DRIVEN_KERNEL_TASKS.md).
+     */
+    private fun abortGeneration() {
+        if (!busy) return
+        generationAborted = true
+        busy = false
+        setBusyUi(false)
+        snack(R.string.generation_stopped)
     }
 
     /** System-role block: project name + project files + last user attachments. */
@@ -1320,6 +1371,19 @@ class ChatActivity : AppCompatActivity() {
         val hasAttachments = pendingAttachments.isNotEmpty()
         val dictating = recorder.isRecording() || sttPending || AgentHolder.micStreaming.value
         val action = binding.composerAction
+        if (busy) {
+            action.setIconResource(R.drawable.ic_stop)
+            action.setIconTintResource(R.color.on_primary)
+            action.backgroundTintList =
+                android.content.res.ColorStateList.valueOf(
+                    com.google.android.material.color.MaterialColors.getColor(
+                        binding.composerCard,
+                        com.google.android.material.R.attr.colorError,
+                    ),
+                )
+            action.contentDescription = getString(R.string.stop_button)
+            return
+        }
         if ((hasText || hasAttachments) && !dictating) {
             action.setIconResource(R.drawable.ic_send)
             action.setIconTintResource(R.color.on_primary)

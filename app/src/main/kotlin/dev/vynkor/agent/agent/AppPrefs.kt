@@ -54,7 +54,16 @@ object AppPrefs {
         prefs(context).edit().putString(KEY_NOTIF_MODE, value).apply()
     }
 
+    private const val KEY_CONV_MODE = "conversation_mode"
     private const val KEY_PROJECTS_EXPANDED = "drawer_projects_expanded"
+
+    /** TTS finished -> auto-start dictation again (hands-free loop). */
+    fun convMode(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_CONV_MODE, false)
+
+    fun setConvMode(context: Context, value: Boolean) {
+        prefs(context).edit().putBoolean(KEY_CONV_MODE, value).apply()
+    }
 
     /** Drawer projects section fold state. */
     fun projectsExpanded(context: Context): Boolean =

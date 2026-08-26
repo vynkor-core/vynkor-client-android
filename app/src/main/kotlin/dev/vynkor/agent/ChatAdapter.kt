@@ -141,7 +141,7 @@ class ChatAdapter(
                 "user" -> {
                     lp.gravity = Gravity.END
                     binding.bubble.setBackgroundResource(R.drawable.bubble_user)
-                    markwon().setMarkdown(binding.messageText, message.content)
+                    markwon().setMarkdown(binding.messageText, withCopyMarkers(message.content))
                     binding.messageText.setTextColor(color(R.color.on_primary))
                     binding.footerRow.visibility = View.GONE
                     itemView.setOnClickListener(null)
@@ -203,7 +203,7 @@ class ChatAdapter(
                 // Partial reveal renders plain flowing text; markdown lands once.
                 binding.messageText.text = message.content.take(revealed)
             } else {
-                markwon().setMarkdown(binding.messageText, message.content)
+                markwon().setMarkdown(binding.messageText, withCopyMarkers(message.content))
             }
             itemView.setOnClickListener(
                 if (message.id == typingId) View.OnClickListener { onTypingTap?.invoke() }
@@ -327,6 +327,50 @@ class ChatAdapter(
     companion object {
         private const val TYPING_PAYLOAD = "typing"
 
+        /**
+         * Fenced code blocks get a tiny "[⧉](vynkor-copy://N)" line right
+         * after the closing fence; the custom link resolver turns a tap on
+         * it into "copy block to clipboard". Blocks are stashed in
+         * [pendingCodeBlocks] at transform time and consumed on click.
+         */
+        private val pendingCodeBlocks = java.util.concurrent.ConcurrentHashMap<Int, String>()
+        private val codeBlockCounter = java.util.concurrent.atomic.AtomicInteger()
+
+        /** Appends a copy-marker link after every fenced block. */
+        internal fun withCopyMarkers(markdown: String): String {
+            val rx = java.util.regex.Pattern.compile("```[^\n]*\n(.*?)```", java.util.regex.Pattern.DOTALL)
+            val m = rx.matcher(markdown)
+            if (!m.find()) return markdown
+            val sb = java.lang.StringBuilder()
+            var pos = 0
+            m.reset()
+            while (m.find()) {
+                val idx = codeBlockCounter.incrementAndGet()
+                pendingCodeBlocks[idx] = m.group(1).orEmpty()
+                m.appendReplacement(
+                    sb,
+                    java.util.regex.Matcher.quoteReplacement(
+                        m.group() + "\n*⧉ [⧉](vynkor-copy://" + idx + ")*",
+                    ),
+                )
+            }
+            m.appendTail(sb)
+            return sb.toString()
+        }
+
+        private fun copyCode(view: android.view.View, link: String) {
+            val idx = link.removePrefix("vynkor-copy://").toIntOrNull() ?: return
+            val code = pendingCodeBlocks.remove(idx) ?: return
+            val cm = view.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("code", code))
+            android.widget.Toast.makeText(
+                view.context,
+                dev.vynkor.agent.R.string.copied,
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+
         private fun createMarkwon(ctx: android.content.Context): Markwon {
             val night = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
@@ -337,6 +381,17 @@ class ChatAdapter(
                 .usePlugin(StrikethroughPlugin.create())
                 .usePlugin(LinkifyPlugin.create())
                 .usePlugin(SyntaxHighlightPlugin.create(Prism4j(ChatGrammarLocator()), prismTheme))
+                .usePlugin(object : io.noties.markwon.AbstractMarkwonPlugin() {
+                    override fun configureConfiguration(configuration: io.noties.markwon.MarkwonConfiguration.Builder) {
+                        configuration.linkResolver { view, link ->
+                            if (link.startsWith("vynkor-copy://")) {
+                                copyCode(view, link)
+                            } else {
+                                io.noties.markwon.LinkResolverDef().resolve(view, link)
+                            }
+                        }
+                    }
+                })
                 .build()
         }
 

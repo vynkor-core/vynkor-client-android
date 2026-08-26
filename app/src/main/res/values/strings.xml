@@ -76,6 +76,9 @@
     <string name="delete_project">Delete project</string>
     <string name="delete_project_confirm">Delete this project? Its chats move to “No project”.</string>
     <string name="all_chats">All chats</string>
+    <string name="generation_stopped">Stopped waiting for the answer</string>
+    <string name="conv_mode_title">Conversation mode</string>
+    <string name="conv_mode_hint">After reading a reply aloud, start listening again automatically — hands-free dialogue</string>
     <string name="chat_duplicate">Duplicate</string>
     <string name="duplicate_title_fmt">Copy — %1$s</string>
     <string name="chat_duplicated">Chat duplicated</string>

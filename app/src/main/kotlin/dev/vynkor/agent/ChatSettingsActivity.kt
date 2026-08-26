@@ -52,6 +52,10 @@ class ChatSettingsActivity : AppCompatActivity() {
         binding.hapticsToggle.setOnCheckedChangeListener { _, checked ->
             AppPrefs.setHapticsEnabled(this, checked)
         }
+        binding.convModeToggle.isChecked = AppPrefs.convMode(this)
+        binding.convModeToggle.setOnCheckedChangeListener { _, checked ->
+            AppPrefs.setConvMode(this, checked)
+        }
 
         binding.rowModel.setOnClickListener { showModelPicker() }
         binding.rowAgent.setOnClickListener { showAgentPicker() }
