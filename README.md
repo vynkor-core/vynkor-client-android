@@ -81,6 +81,9 @@ export ANDROID_HOME=$HOME/.android-sdk   # unset ANDROID_SDK_ROOT if it differs
 
 Request/response schemas, limits and permission mapping for every capability:
 [docs/HOST_CAPABILITIES_PROTOCOL.md](docs/HOST_CAPABILITIES_PROTOCOL.md).
+Kernel-side work required for the next product milestones (CLI-free pairing,
+per-device keys, chat streaming, assistant sessions):
+[docs/CLIENT_DRIVEN_KERNEL_TASKS.md](docs/CLIENT_DRIVEN_KERNEL_TASKS.md).
 Sensitive grants (SMS/calls/calendar/nearby-devices/brightness/DND) are never
 requested at service start — they are opt-in per capability from
 **Settings → Capabilities**, and each provider re-checks its grant on every call.
