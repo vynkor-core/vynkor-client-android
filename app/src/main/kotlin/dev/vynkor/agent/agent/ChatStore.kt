@@ -1,6 +1,7 @@
 package dev.vynkor.agent.agent
 
 import android.content.Context
+import dev.vynkor.agent.R
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -158,6 +159,45 @@ object ChatStore {
             if (idx < 0) return
             chats[idx] = chats[idx].copy(projectId = projectId.orEmpty())
             scheduleWrite(context, profileId)
+        }
+    }
+
+    /**
+     * Full clone of [chatId]: fresh ids everywhere (chat, messages,
+     * attachments) and attachment bytes copied into the new chat's store
+     * directory, so deleting either copy never orphans or breaks the other.
+     * Returns the new chat id, or null when the source is missing.
+     */
+    fun cloneChat(context: Context, profileId: String, chatId: String): String? {
+        synchronized(lock) {
+            ensureLoaded(context, profileId)
+            val src = cache.getValue(profileId).firstOrNull { it.id == chatId } ?: return null
+            val newId = java.util.UUID.randomUUID().toString()
+            val copiedMessages = src.messages.map { msg ->
+                val atts = msg.attachments.mapNotNull { att ->
+                    val from = AttachmentStore.fileFor(context, chatId, att)
+                    if (!from.exists()) return@mapNotNull null
+                    val copy = att.copy(id = java.util.UUID.randomUUID().toString())
+                    val to = AttachmentStore.fileFor(context, newId, copy)
+                    runCatching { from.copyTo(to, overwrite = true) }
+                        .getOrNull()?.takeIf { it.length() == from.length() } ?: return@mapNotNull null
+                    copy
+                }
+                msg.copy(id = java.util.UUID.randomUUID().toString(), attachments = atts)
+            }
+            val clone = src.copy(
+                id = newId,
+                // Title marks the twin; pinned state is not inherited.
+                title = context.getString(R.string.duplicate_title_fmt, src.title.ifBlank { context.getString(R.string.new_chat) }),
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+                pinned = false,
+                messages = copiedMessages,
+            )
+            val chats = cache.getValue(profileId)
+            chats.add(clone)
+            scheduleWrite(context, profileId)
+            return newId
         }
     }
 

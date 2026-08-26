@@ -46,7 +46,7 @@ class ProjectChatsActivity : AppCompatActivity() {
                         .putExtra(ChatActivity.EXTRA_CHAT_ID, chat.id),
                 )
             },
-            onLongPress = { chat -> confirmDelete(chat) },
+            onLongPress = { chat -> showChatMenu(chat) },
         )
         binding.chatList.layoutManager = LinearLayoutManager(this)
         binding.chatList.adapter = adapter
@@ -74,6 +74,47 @@ class ProjectChatsActivity : AppCompatActivity() {
         val chats = ChatStore.list(this, profileId).filter { it.projectId == projectId }
         binding.projectEmpty.visibility = if (chats.isEmpty()) View.VISIBLE else View.GONE
         adapter.submit(chats)
+    }
+
+    private fun showChatMenu(chat: Chat) {
+        val options = arrayOf(
+            getString(R.string.move_to_project),
+            getString(R.string.chat_duplicate),
+            getString(R.string.delete_chat),
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle(chat.title.ifBlank { getString(R.string.new_chat) })
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> moveToProjectDialog(chat)
+                    1 -> {
+                        ChatStore.cloneChat(this, profileId, chat.id)
+                        refresh()
+                    }
+                    2 -> confirmDelete(chat)
+                }
+            }
+            .show()
+    }
+
+    /**
+     * Same dialog as the main drawer, "No project" included — this is how a
+     * chat leaves a project. Moving into another project works too.
+     */
+    private fun moveToProjectDialog(chat: Chat) {
+        val projects = ProjectStore.list(this, profileId).filter { it.id != projectId }
+        val labels = mutableListOf(getString(R.string.no_project_item))
+        labels.addAll(projects.map { it.name })
+        val ids = mutableListOf<String?>(null)
+        ids.addAll(projects.map { it.id })
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.move_to_project)
+            .setItems(labels.toTypedArray()) { _, which ->
+                ChatStore.moveToProject(this, profileId, chat.id, ids[which])
+                refresh()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun confirmDelete(chat: Chat) {

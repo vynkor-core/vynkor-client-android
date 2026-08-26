@@ -958,6 +958,7 @@ class ChatActivity : AppCompatActivity() {
         val options = arrayOf(
             getString(if (target.pinned) R.string.unpin_chat else R.string.pin_chat),
             getString(R.string.rename_chat),
+            getString(R.string.chat_duplicate),
             getString(R.string.move_to_project),
             getString(R.string.export_chat),
             getString(R.string.delete_chat),
@@ -973,12 +974,26 @@ class ChatActivity : AppCompatActivity() {
                         refreshChatList()
                     }
                     1 -> renameChat(target)
-                    2 -> moveToProjectDialog(target)
-                    3 -> exportChat(target)
-                    4 -> confirmDelete(target)
+                    2 -> duplicateChat(target)
+                    3 -> moveToProjectDialog(target)
+                    4 -> exportChat(target)
+                    5 -> confirmDelete(target)
                 }
             }
             .show()
+    }
+
+    /** Twin of [target]: same project and content, fresh ids everywhere. */
+    private fun duplicateChat(target: Chat) {
+        val active = profile ?: return
+        if (ChatStore.cloneChat(this, active.id, target.id) != null) {
+            com.google.android.material.snackbar.Snackbar.make(
+                binding.root,
+                R.string.chat_duplicated,
+                com.google.android.material.snackbar.Snackbar.LENGTH_SHORT,
+            ).show()
+        }
+        refreshChatList()
     }
 
     private fun exportChat(target: Chat) {

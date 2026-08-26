@@ -76,6 +76,9 @@
     <string name="delete_project">Удалить проект</string>
     <string name="delete_project_confirm">Удалить этот проект? Его чаты перейдут в «Без проекта».</string>
     <string name="all_chats">Все чаты</string>
+    <string name="chat_duplicate">Дублировать</string>
+    <string name="duplicate_title_fmt">Копия — %1$s</string>
+    <string name="chat_duplicated">Чат продублирован</string>
     <string name="move_to_project">Переместить в проект</string>
     <string name="no_project_item">Без проекта</string>
     <string name="new_chat">Новый чат</string>
