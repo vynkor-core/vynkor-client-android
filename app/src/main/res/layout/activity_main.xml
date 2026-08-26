@@ -155,6 +155,15 @@
                     android:background="?android:attr/listDivider" />
 
                 <include
+                    android:id="@+id/rowLanguage"
+                    layout="@layout/item_settings_row" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?android:attr/listDivider" />
+
+                <include
                     android:id="@+id/rowNotifLook"
                     layout="@layout/item_settings_row" />
 

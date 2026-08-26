@@ -105,6 +105,14 @@ class MainActivity : AppCompatActivity() {
         bindRow(binding.rowAppearance, R.drawable.ic_palette, R.string.appearance_title)
             .setOnClickListener { showAppearanceDialog() }
 
+        bindRow(binding.rowLanguage, R.drawable.ic_hosts, R.string.language_title)
+            .setOnClickListener { showLanguageDialog() }
+        binding.rowLanguage.rowSubtitle.text = languageSubtitle()
+
+        bindRow(binding.rowNotifLook, R.drawable.ic_notifications, R.string.notif_look_title)
+            .setOnClickListener { showNotificationModeDialog() }
+        binding.rowNotifLook.rowSubtitle.text = notifModeSubtitle()
+
         bindRow(binding.rowChat, R.drawable.ic_tune, R.string.chat_behavior_title)
             .setOnClickListener { startActivity(Intent(this, ChatSettingsActivity::class.java)) }
 
@@ -201,6 +209,84 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
         return getString(R.string.caps_subtitle_fmt, on, runtimeCaps.size)
+    }
+
+    /** Current in-app language or "system default". */
+    private fun languageSubtitle(): String {
+        val appLocales = androidx.appcompat.app.AppCompatDelegate.getApplicationLocales()
+        return if (appLocales.isEmpty) {
+            getString(R.string.language_system)
+        } else {
+            // Native name ("Русский"), matching how OS pickers label locales.
+            appLocales[0]?.getDisplayName(appLocales[0])
+                ?: appLocales.toLanguageTags()
+        }
+    }
+
+    /**
+     * Per-app language via AppCompatDelegate (native on API 33+, backported
+     * below via autoStoreLocales). Changing recreates all activities.
+     */
+    private fun showLanguageDialog() {
+        val tags = listOf("", "en", "ru")
+        val labels = arrayOf(
+            getString(R.string.language_system),
+            getString(R.string.language_english),
+            getString(R.string.language_russian),
+        )
+        val current = androidx.appcompat.app.AppCompatDelegate.getApplicationLocales()
+        val currentTag = current.toLanguageTags()
+        val checked = when {
+            currentTag.startsWith("ru") -> 2
+            currentTag.startsWith("en") -> 1
+            else -> 0
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.language_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                dialog.dismiss()
+                val target = if (tags[which].isEmpty()) {
+                    androidx.core.os.LocaleListCompat.getEmptyLocaleList()
+                } else {
+                    androidx.core.os.LocaleListCompat.forLanguageTags(tags[which])
+                }
+                if (target != current) {
+                    androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(target)
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun notifModeSubtitle(): String = getString(
+        when (AppPrefs.notifMode(this)) {
+            AppPrefs.NOTIF_MINIMAL -> R.string.notif_mode_minimal
+            AppPrefs.NOTIF_HIDDEN -> R.string.notif_mode_hidden
+            else -> R.string.notif_mode_detailed
+        },
+    )
+
+    /** Detailed / minimal / hidden — applies to the running service at once. */
+    private fun showNotificationModeDialog() {
+        val modes = listOf(AppPrefs.NOTIF_DETAILED, AppPrefs.NOTIF_MINIMAL, AppPrefs.NOTIF_HIDDEN)
+        val labels = modes.map { getString(notifLabel(it)) }.toTypedArray()
+        val checked = modes.indexOf(AppPrefs.notifMode(this)).coerceAtLeast(0)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.notif_look_title)
+            .setSingleChoiceItems(labels, checked) { dialog, which ->
+                AppPrefs.setNotifMode(this, modes[which])
+                binding.rowNotifLook.rowSubtitle.text = notifModeSubtitle()
+                dev.vynkor.agent.agent.AgentService.refreshNotification(this)
+                dialog.dismiss()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun notifLabel(mode: String): Int = when (mode) {
+        AppPrefs.NOTIF_MINIMAL -> R.string.notif_mode_minimal
+        AppPrefs.NOTIF_HIDDEN -> R.string.notif_mode_hidden
+        else -> R.string.notif_mode_detailed
     }
 
     private fun themeSubtitle(): String = getString(

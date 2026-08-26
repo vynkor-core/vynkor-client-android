@@ -46,7 +46,9 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:networkSecurityConfig="@xml/network_security_config"
-        tools:targetApi="35">
+        tools:targetApi="35"
+        android:localeConfig="@xml/locales_config">
+
 
         <activity
             android:name=".MainActivity"
@@ -164,6 +166,16 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/agent_status_widget_info" />
         </receiver>
+
+        <!-- Persists the per-app locale chosen in Settings on API < 33. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
 
         <service
             android:name=".notifications.NotificationListener"

@@ -296,4 +296,10 @@
     <string name="greeting_afternoon">Good afternoon</string>
     <string name="greeting_evening">Good evening</string>
     <string name="greeting_night">Good night</string>
+
+    <!-- Language picker -->
+    <string name="language_title">Language</string>
+    <string name="language_system">System default</string>
+    <string name="language_english">English</string>
+    <string name="language_russian">Русский</string>
 </resources>
