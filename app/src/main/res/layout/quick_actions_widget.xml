@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widgetRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    android:gravity="center"
+    android:orientation="horizontal">
+
+    <LinearLayout
+        android:id="@+id/qaTorch"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="@drawable/widget_button_bg"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/qaTorchIcon"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:contentDescription="@string/widget_qa_torch"
+            android:src="@drawable/ic_flash" />
+
+        <TextView
+            android:id="@+id/qaTorchLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/widget_qa_torch"
+            android:textColor="#E6E1E5"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <Space
+        android:layout_width="6dp"
+        android:layout_height="1dp" />
+
+    <LinearLayout
+        android:id="@+id/qaDnd"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="@drawable/widget_button_bg"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/qaDndIcon"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:contentDescription="@string/widget_qa_dnd"
+            android:src="@drawable/ic_dnd" />
+
+        <TextView
+            android:id="@+id/qaDndLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/widget_qa_dnd"
+            android:textColor="#E6E1E5"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <Space
+        android:layout_width="6dp"
+        android:layout_height="1dp" />
+
+    <LinearLayout
+        android:id="@+id/qaRinger"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="@drawable/widget_button_bg"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/qaRingerIcon"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:contentDescription="@string/widget_qa_ringer"
+            android:src="@drawable/ic_bell" />
+
+        <TextView
+            android:id="@+id/qaRingerLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/widget_qa_ringer"
+            android:textColor="#E6E1E5"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+    <Space
+        android:layout_width="6dp"
+        android:layout_height="1dp" />
+
+    <LinearLayout
+        android:id="@+id/qaAgent"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:background="@drawable/widget_button_bg"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <ImageView
+            android:id="@+id/qaAgentIcon"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:contentDescription="@string/widget_qa_agent"
+            android:src="@drawable/ic_stat_vynkor" />
+
+        <TextView
+            android:id="@+id/qaAgentLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/widget_start"
+            android:textColor="#E6E1E5"
+            android:textSize="11sp" />
+    </LinearLayout>
+</LinearLayout>

@@ -197,6 +197,15 @@
     <string name="widget_offline">Offline</string>
     <string name="widget_start">Start</string>
     <string name="widget_stop">Stop</string>
+    <string name="widget_online_host_fmt">Connected · %1$s</string>
+    <string name="widget_battery_fmt">Battery: %1$d%%</string>
+    <string name="widget_battery_charging_fmt">⚡ Battery: %1$d%% (charging)</string>
+    <string name="widget_battery_unknown">Battery: n/a</string>
+    <string name="widget_updated_fmt">Updated %1$s</string>
+    <string name="widget_qa_torch">Torch</string>
+    <string name="widget_qa_dnd">DND</string>
+    <string name="widget_qa_ringer">Ringer</string>
+    <string name="widget_qa_agent">Agent</string>
 
     <!-- Capabilities-permissions screen -->
     <string name="caps_permissions_title">Capabilities</string>

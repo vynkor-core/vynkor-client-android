@@ -52,13 +52,16 @@ class AgentStatusWidget : AppWidgetProvider() {
 
         private fun views(context: Context): RemoteViews {
             val accent = ContextCompat.getColor(context, R.color.primary)
+            val online = running()
+            val host = dev.vynkor.agent.agent.ProfileStore.active(context)?.name?.ifBlank { null }
+            val statusLine = when {
+                online && host != null -> context.getString(R.string.widget_online_host_fmt, host.take(16))
+                online -> context.getString(R.string.widget_online)
+                else -> context.getString(R.string.widget_offline)
+            }
             return RemoteViews(context.packageName, R.layout.agent_status_widget).apply {
-                val online = running()
                 setTextColor(R.id.widgetStatus, if (online) accent else 0xFF948F99.toInt())
-                setTextViewText(
-                    R.id.widgetStatus,
-                    context.getString(if (online) R.string.widget_online else R.string.widget_offline),
-                )
+                setTextViewText(R.id.widgetStatus, statusLine)
                 setTextViewText(
                     R.id.widgetToggle,
                     context.getString(if (online) R.string.widget_stop else R.string.widget_start),
