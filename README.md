@@ -96,9 +96,11 @@ project), new chats inherit the selected project, long-press a chat →
 **Project files** are per-project context folders: files added there are
 copied into app-private storage and their text contents (bounded) are injected
 into every AI request made from that project's chats. **Attachments** work the
-same way for single messages: photo/video via the system picker, any file via
-the document picker; images render as thumbnails in the bubble and everything
-is described to the AI in an injected system block.
+same way for single messages: photo/video via the system picker, camera
+capture, any file via the document picker; images render as thumbnails in the
+bubble and everything is described to the AI in an injected system block.
+Backups (Settings → Data) carry chat/attachment *metadata* only — file bytes
+stay on the device.
 
 ## Quick access
 

@@ -84,9 +84,17 @@ class ProjectFilesStoreTest {
 
     @Test
     fun bucketDayClassifiesTodayYesterdayOlder() {
-        val now = System.currentTimeMillis()
-        assertEquals(0, DrawerItem.bucketDay(now))
-        assertEquals(1, DrawerItem.bucketDay(now - 12L * 60 * 60 * 1000))
-        assertEquals(2, DrawerItem.bucketDay(now - 5L * 24 * 60 * 60 * 1000))
+        fun at(dayOffset: Int, hour: Int): Long =
+            java.util.Calendar.getInstance().apply {
+                add(java.util.Calendar.DAY_OF_YEAR, dayOffset)
+                set(java.util.Calendar.HOUR_OF_DAY, hour)
+                set(java.util.Calendar.MINUTE, 0)
+                set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }.timeInMillis
+
+        assertEquals(0, DrawerItem.bucketDay(at(0, 12)))
+        assertEquals(1, DrawerItem.bucketDay(at(-1, 12)))
+        assertEquals(2, DrawerItem.bucketDay(at(-5, 12)))
     }
 }

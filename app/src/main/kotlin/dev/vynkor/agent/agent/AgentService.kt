@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import dev.vynkor.agent.AgentStatusWidget
 import dev.vynkor.agent.Agent
 import dev.vynkor.agent.AgentConfig
 import dev.vynkor.agent.AgentObserver
@@ -128,6 +129,7 @@ class AgentService : Service() {
                     getString(R.string.service_reconnecting)
                 }
                 updateNotification()
+                AgentStatusWidget.pushAll(this@AgentService)
             }
 
             override fun onStatus(status: ConnectionStatus) {
@@ -168,6 +170,7 @@ class AgentService : Service() {
         AgentHolder.connectionState.value = false
         AgentHolder.micStreaming.value = false
         AgentHolder.hostStatus.value = HostStatus.Idle
+        AgentStatusWidget.pushAll(this)
         // Audio teardown involves bounded joins (MicCapture.stop) and Rust
         // runtime shutdown — keep both off the main thread (R-04).
         cleanupExecutor.execute {
