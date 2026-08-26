@@ -271,6 +271,7 @@ class ChatActivity : AppCompatActivity() {
             loadChat(null)
             drawer.closeDrawers()
         }
+        projectsExpanded = AppPrefs.projectsExpanded(this)
         binding.addProject.setOnClickListener { showNewProjectDialog() }
         binding.projectsHeader.setOnClickListener { toggleProjects() }
         binding.settings.setOnClickListener {
@@ -632,9 +633,8 @@ class ChatActivity : AppCompatActivity() {
     /** Message to scroll to + pulse after the next loadChat (search open). */
     private var pendingHighlightMessageId: String? = null
 
-    /** Projects section fold state survives restarts. */
-    private var projectsExpanded: Boolean =
-        AppPrefs.projectsExpanded(this)
+    /** Projects section fold state survives restarts; read in onCreate. */
+    private var projectsExpanded: Boolean = true
 
     private fun toggleProjects() {
         projectsExpanded = !projectsExpanded
