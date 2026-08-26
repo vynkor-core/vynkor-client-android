@@ -86,7 +86,7 @@
 | F-06 | UI/UX по референсам: группировка чатов в дровере по дням (Today/Yesterday/дата), приветствие по времени суток на welcome-экране, кнопка attach слева в композере (паттерн Gemini), send↔mic свап с учётом вложений | ✅ |
 | F-07 | Quick Settings tile «vynkor agent» (IDEAS #1) | ✅ |
 | F-08 | Документация хостовой стороны всех капабилити: `docs/HOST_CAPABILITIES_PROTOCOL.md`; README обновлён | ✅ |
-| F-09 | Виджеты (IDEAS #17): Status 2×1 (+имя хоста), Device 2×2 (батарея live с дебаунсом), Quick Actions 4×1 (torch/DND/ringer-cycle/agent); WidgetSync из observer'а сервиса; Robolectric-тесты логики | ✅ |
+| F-09 | Виджеты (IDEAS #17): Action Grid 2×2 (Чат/Голос/Камера — тап открывает чат и сразу запускает диктовку или съёмку, отложено до биометрического гейта; + тоггл агента), Status 2×1 (+имя хоста), Quick Actions 4×1 (torch/DND/ringer-cycle/agent; фикс краша инфляции — Space не поддерживается RemoteViews); WidgetSync из observer'а сервиса; Robolectric-тесты | ✅ |
 
 Контракты проверяются тестами: Rust 42/42 (`cargo test`, `clippy -D warnings`),
 Kotlin 65/65 (`:app:testDebugUnitTest`, Robolectric).

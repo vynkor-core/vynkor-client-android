@@ -7,8 +7,6 @@ import android.media.AudioManager
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -21,35 +19,6 @@ import org.robolectric.RobolectricTestRunner
 class WidgetLogicTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
-
-    @Before
-    fun setUp() {
-        PowerStateReceiver.prefs(context).edit().clear().commit()
-    }
-
-    private fun batteryBroadcast(percent: Int, charging: Boolean): Intent =
-        Intent(Intent.ACTION_BATTERY_CHANGED)
-            .putExtra("level", percent)
-            .putExtra("scale", 100)
-            .putExtra("plugged", if (charging) 1 else 0)
-
-    @Test
-    fun powerReceiverDebouncesUnchangedSnapshots() {
-        val receiver = PowerStateReceiver()
-        val first = batteryBroadcast(77, charging = false)
-        receiver.onReceive(context, first)
-
-        val prefs = PowerStateReceiver.prefs(context)
-        assertEquals(77, prefs.getInt("widget_battery_percent", -1))
-        assertFalse(prefs.getBoolean("widget_battery_charging", true))
-
-        // Same snapshot again must not touch prefs' timestamp-worthy state.
-        receiver.onReceive(context, batteryBroadcast(77, charging = false))
-        assertEquals(77, prefs.getInt("widget_battery_percent", -1))
-
-        receiver.onReceive(context, batteryBroadcast(76, charging = false))
-        assertEquals(76, prefs.getInt("widget_battery_percent", -1))
-    }
 
     @Test
     fun quickActionsRingerCyclesNormalVibrateSilent() {

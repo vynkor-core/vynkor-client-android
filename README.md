@@ -105,11 +105,11 @@ stay on the device.
 ## Quick access
 
 * **Home-screen widgets** (three variants):
+  * *Actions* (2×2) — Chat / **Voice** / **Camera** tiles: tap opens the chat and
+    immediately starts dictation or a camera capture; plus an Agent start/stop tile.
   * *Status* (2×1) — agent state + host name; tap opens the chat, button starts/stops;
-  * *Device* (2×2) — agent state + battery %/charging (live) + refresh time;
   * *Quick actions* (4×1) — torch / DND / ringer cycle / agent toggle, no app needed
     (DND without the policy grant deep-links to its settings screen).
-  Battery repaints are debounced to real percent/charging flips.
 * Quick Settings tile “vynkor agent” — one-tap start/stop of the agent.
 * Long-press launcher icon → *New chat* shortcut.
 * Share-to-app: text shared from other apps lands in the composer.

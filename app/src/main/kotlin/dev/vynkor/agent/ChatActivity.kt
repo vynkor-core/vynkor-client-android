@@ -104,6 +104,8 @@ class ChatActivity : AppCompatActivity() {
 
     private var pendingCameraFile: java.io.File? = null
 
+    private var pendingAutoAction: String? = null
+
     private val cameraPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) launchCameraCapture() else snack(R.string.camera_denied)
@@ -177,6 +179,7 @@ class ChatActivity : AppCompatActivity() {
 
         profile = ProfileStore.active(this)
         chat = Chat()
+        pendingAutoAction = intent?.getStringExtra(EXTRA_AUTO_ACTION)
 
         drawer = binding.drawer
         // R-20 (№32): fixed 300dp was ~94% of a narrow screen — cap at 80%.
@@ -389,6 +392,7 @@ class ChatActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        tryRunAutoAction()
         val current = ProfileStore.active(this)
         if (current?.id != profile?.id) {
             profile = current
@@ -457,6 +461,26 @@ class ChatActivity : AppCompatActivity() {
         }
         tts?.shutdown()
         tts = null
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.getStringExtra(EXTRA_AUTO_ACTION)?.let { pendingAutoAction = it }
+        tryRunAutoAction()
+    }
+
+    /**
+     * Widget tiles land here; the action fires only after the biometric gate
+     * (AppLock.unlocked) so mic/camera never run behind the lock screen.
+     */
+    private fun tryRunAutoAction() {
+        if (!AppLock.unlocked) return
+        val action = pendingAutoAction ?: return
+        pendingAutoAction = null
+        when (action) {
+            AUTO_VOICE -> toggleDictation(binding.input)
+            AUTO_CAMERA -> ensureCameraPermissionThenCapture()
+        }
     }
 
     private fun refreshTitle() {
@@ -1613,6 +1637,11 @@ class ChatActivity : AppCompatActivity() {
         private const val STATE_DRAFT = "state_draft"
         private const val STATE_CHAT_ID = "state_chat_id"
         private const val STATE_SEARCH = "state_search"
+
+        /** Widget deep actions (ActionGridWidget). */
+        const val EXTRA_AUTO_ACTION = "auto_action"
+        const val AUTO_VOICE = "voice"
+        const val AUTO_CAMERA = "camera"
 
         /** How often the offline recognizer re-decodes the accumulated audio. */
         private const val PARTIAL_INTERVAL_MS = 1000L

@@ -157,16 +157,16 @@
                 android:resource="@xml/agent_status_widget_info" />
         </receiver>
 
-        <!-- 2×2 device card: agent state + battery + refresh time. -->
+        <!-- 2×2 action grid: chat / voice / camera / agent toggle. -->
         <receiver
-            android:name=".DeviceStatusWidget"
+            android:name=".ActionGridWidget"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/device_status_widget_info" />
+                android:resource="@xml/action_grid_widget_info" />
         </receiver>
 
         <!-- 4×1 quick actions: torch / DND / ringer cycle / agent toggle. -->
@@ -179,15 +179,6 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/quick_actions_widget_info" />
-        </receiver>
-
-        <!-- Battery watcher feeding the device card (debounced inside). -->
-        <receiver
-            android:name=".PowerStateReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BATTERY_CHANGED" />
-            </intent-filter>
         </receiver>
 
         <service
