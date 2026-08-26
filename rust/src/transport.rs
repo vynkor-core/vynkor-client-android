@@ -282,6 +282,39 @@ fn resolve_ws_url(raw: &str) -> Result<url::Url, AgentError> {
 mod tests {
     use super::*;
 
+    const TEST_CERT_PEM: &str = r#"-----BEGIN CERTIFICATE-----
+MIIDDTCCAfWgAwIBAgIUFZlUn8Apfm8fzitpbsD2mtRMzcUwDQYJKoZIhvcNAQEL
+BQAwFjEUMBIGA1UEAwwLdnlua29yLXRlc3QwHhcNMjYwODI2MTMxMDQ1WhcNMzYw
+ODIzMTMxMDQ1WjAWMRQwEgYDVQQDDAt2eW5rb3ItdGVzdDCCASIwDQYJKoZIhvcN
+AQEBBQADggEPADCCAQoCggEBAIX/hLMcQ4d1t4SXebm0PqybWRkp2l7Rog8Gy6bP
+QSRj1NN390iPGlZgdr6T788OU4acGwWeuRCORY4xu/bIjgHSK+SKFo0wIdtGsCeX
+pLddnQD1q7hOOdJon+yDXeD7AIj2q2vS6bGt/LuCUc01I2irwPI57mb/bzHusu8h
+ivCuPPaFwCPmc7GFOIFdwrZj8UCEHU1kJHFV0WSDN+VgFrxUld/wbdeeYU+caBly
+jrFMLkW1BVV+m/NsvkijvTb4IcRnbTBJ3M2dbPGWdQVRNQkic5glJq4NDF7x4/iX
+IF/R1mye/TPhTxEk5SsTJFQNN4VU6jT9GQdRet2+DNdb91ECAwEAAaNTMFEwHQYD
+VR0OBBYEFDFl3+meOpu4+nHXNXbtQRPlDQ+PMB8GA1UdIwQYMBaAFDFl3+meOpu4
++nHXNXbtQRPlDQ+PMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEB
+AGB/4erHVxIEUmKkR+rArXS8TlH2xHVr3Rl5CpBoy0CXaCxPbUZUcVYErAUjlvlr
+C5bPABxQdmNidpdN+sIjNLnjaDfCjQVIXfueAH9FVtiah3BvUDNQ6b+6+GbEBeGc
+/9FdLBdnYu60AI/AoZW7Eo5QV8cNB9r4xRWnmXcXFUG6EoDSlG3G05uj+L913WFM
+cAuXnNfq5+uYkdKkwmbrz0P+/0gURET529/ycZCqBEzU2PYI48gOiXDSavMvNh7+
+yb1Tnq5tizCER4XqSXqd5jIWj06Iijtt3Yo9WbD36qqOiBcU8cxD+LyRxnIGd+Dd
+74J6/N4TKgi8tilSDRAEdJk=
+-----END CERTIFICATE-----"#;
+
+    #[test]
+    fn pinned_tls_accepts_a_valid_cert_pem() {
+        // Building a connector must succeed with exactly one trusted root.
+        let cfg = pinned_tls_config(TEST_CERT_PEM).unwrap();
+        let _ = cfg;
+    }
+
+    #[test]
+    fn pinned_tls_rejects_pem_without_certs() {
+        let err = pinned_tls_config("not a pem at all").unwrap_err();
+        assert!(err.to_string().contains("no certificates"));
+    }
+
     #[test]
     fn resolve_bare_origin_gets_ws_and_path() {
         let url = resolve_ws_url("localhost:8080").unwrap();

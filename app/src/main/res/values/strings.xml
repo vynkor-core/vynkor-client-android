@@ -190,6 +190,8 @@
     <string name="hosts_count_fmt">%1$d configured</string>
     <string name="security_subtitle_bio">Fingerprint · auto-lock</string>
     <string name="security_subtitle_pin">PIN · fingerprint · auto-lock</string>
+    <string name="diagnostics_title">Diagnostics</string>
+    <string name="diagnostics_share">Share…</string>
     <string name="about_row">About</string>
     <string name="about_body">vynkor agent v%1$s\nAndroid device-agent for the vynkor plugin kernel.\n\nLicensed under Apache-2.0 or MIT.</string>
     <string name="app_lock">App lock</string>

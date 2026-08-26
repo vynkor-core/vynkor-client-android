@@ -126,6 +126,19 @@ Returning after ≥ 5 minutes in background re-locks the app. Devices with no
 enrolled authenticator pass through; cancelling the prompt closes the app.
 While locked, content is hidden from screenshots/recents (`FLAG_SECURE`).
 
+## Diagnostics
+
+Settings → **Diagnostics** shows a live report — app/device facts, active
+host (URL, device id; secrets appear only as "set (N chars)", never their
+values), agent connection state, permission grants and the last in-app
+events — with one tap **Share…** to attach it to a bug report. The event
+ring buffer is process-local: nothing persists or leaves the phone unless
+you share it.
+
+TLS: when a pairing payload carries `cert_pem` for a `wss://` host, the
+connection trusts *only* that certificate (rustls root pinning in the Rust
+core) — self-signed hosts work without disabling verification.
+
 ## Live status & telemetry
 
 The foreground notification mirrors the connection state

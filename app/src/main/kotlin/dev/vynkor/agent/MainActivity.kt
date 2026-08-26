@@ -105,6 +105,9 @@ class MainActivity : AppCompatActivity() {
         bindRow(binding.rowAbout, R.drawable.ic_info, R.string.about_row)
             .setOnClickListener { startActivity(Intent(this, AboutActivity::class.java)) }
 
+        bindRow(binding.rowDiagnostics, R.drawable.ic_diag, R.string.diagnostics_title)
+            .setOnClickListener { showDiagnosticsDialog() }
+
         binding.connect.setOnClickListener {
             if (AgentHolder.agent != null) {
                 AgentService.stop(this)
@@ -223,6 +226,33 @@ class MainActivity : AppCompatActivity() {
                 if (target != current) {
                     androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(target)
                 }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    /** Read-only report; Share hands it to any app the user picks. */
+    private fun showDiagnosticsDialog() {
+        val report = Diagnostics.build(this)
+        val scroll = android.widget.ScrollView(this)
+        val text = android.widget.TextView(this).apply {
+            setTextIsSelectable(false)
+            typeface = android.graphics.Typeface.MONOSPACE
+            textSize = 12f
+            setPadding(48, 24, 48, 12)
+            text = report
+        }
+        scroll.addView(text)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.diagnostics_title)
+            .setView(scroll)
+            .setPositiveButton(R.string.diagnostics_share) { _, _ ->
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, getString(R.string.diagnostics_title))
+                    putExtra(Intent.EXTRA_TEXT, report)
+                }
+                startActivity(Intent.createChooser(send, getString(R.string.diagnostics_share)))
             }
             .setNegativeButton(R.string.cancel, null)
             .show()

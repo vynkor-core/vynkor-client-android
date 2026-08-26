@@ -1163,6 +1163,10 @@ class ChatActivity : AppCompatActivity() {
                     else -> e.message ?: getString(R.string.ai_error)
                 }
                 appendMessage(ChatMessage("error", message))
+                dev.vynkor.agent.agent.EventLog.push(
+                    "ai",
+                    "completion failed: $message",
+                )
             }
             busy = false
             setBusyUi(false)

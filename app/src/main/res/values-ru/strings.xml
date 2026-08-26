@@ -190,6 +190,8 @@
     <string name="hosts_count_fmt">настроено: %1$d</string>
     <string name="security_subtitle_bio">Отпечаток · автоблокировка</string>
     <string name="security_subtitle_pin">PIN · отпечаток · автоблокировка</string>
+    <string name="diagnostics_title">Диагностика</string>
+    <string name="diagnostics_share">Поделиться…</string>
     <string name="about_row">О приложении</string>
     <string name="about_body">vynkor agent v%1$s\nАгент устройства Android для плагин-ядра vynkor.\n\nЛицензии Apache-2.0 или MIT.</string>
     <string name="app_lock">Блокировка приложения</string>

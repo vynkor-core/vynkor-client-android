@@ -123,6 +123,7 @@ class AgentService : Service() {
                 AgentHolder.connectionState.value = connected
                 AgentHolder.hostStatus.value =
                     if (connected) HostStatus.Connected else HostStatus.Reconnecting
+                EventLog.push("agent", if (connected) "connected" else "reconnecting")
                 connectionLine = if (connected) {
                     getString(R.string.service_connected_to, hostLabel)
                 } else {
@@ -142,6 +143,7 @@ class AgentService : Service() {
                         if (!AgentHolder.connectionState.value) {
                             AgentHolder.hostStatus.value =
                                 HostStatus.Unreachable(status.reason)
+                            EventLog.push("agent", "unreachable: ${status.reason}")
                         }
                 }
             }
@@ -274,6 +276,7 @@ class AgentService : Service() {
         private const val ACTION_STOP = "dev.vynkor.agent.STOP"
 
         fun start(context: Context) {
+        EventLog.push("service", "start requested")
             val intent = Intent(context, AgentService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -283,6 +286,7 @@ class AgentService : Service() {
         }
 
         fun stop(context: Context) {
+        EventLog.push("service", "stop")
             context.startService(Intent(context, AgentService::class.java).setAction(ACTION_STOP))
         }
     }
