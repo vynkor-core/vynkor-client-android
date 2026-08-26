@@ -54,6 +54,8 @@
 
     <string name="chats_title">Чаты</string>
     <string name="projects_title">Проекты</string>
+    <string name="projects_count_fmt">%1$d</string>
+    <string name="project_chats_empty">В этом проекте пока нет чатов.</string>
     <string name="search_chats_hint">Поиск по чатам</string>
     <string name="clear_search">Очистить поиск</string>
     <string name="no_search_results">Ничего не найдено</string>

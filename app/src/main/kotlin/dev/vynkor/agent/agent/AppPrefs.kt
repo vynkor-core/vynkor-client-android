@@ -54,6 +54,16 @@ object AppPrefs {
         prefs(context).edit().putString(KEY_NOTIF_MODE, value).apply()
     }
 
+    private const val KEY_PROJECTS_EXPANDED = "drawer_projects_expanded"
+
+    /** Drawer projects section fold state. */
+    fun projectsExpanded(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_PROJECTS_EXPANDED, true)
+
+    fun setProjectsExpanded(context: Context, expanded: Boolean) {
+        prefs(context).edit().putBoolean(KEY_PROJECTS_EXPANDED, expanded).apply()
+    }
+
     /** First-launch onboarding shown until a profile exists or user skips. */
     const val KEY_WIZARD_DONE = "setup_wizard_done"
 

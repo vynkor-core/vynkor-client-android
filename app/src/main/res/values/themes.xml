@@ -57,4 +57,8 @@
         <item name="colorPrimaryContainer">@color/acc_rose_container</item>
         <item name="colorOnPrimaryContainer">@color/acc_rose_on_container</item>
     </style>
+    <style name="ShapeAppearance.Vynkor.Pill" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">22dp</item>
+    </style>
 </resources>

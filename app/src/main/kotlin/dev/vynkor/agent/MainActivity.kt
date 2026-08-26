@@ -43,40 +43,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var pendingServiceStart = false
 
-    private val mainScanLauncher = registerForActivityResult(
-        com.journeyapps.barcodescanner.ScanContract(),
-    ) { result ->
-        if (result.contents == null) return@registerForActivityResult
-        when (val decision = PairingApplier.handle(this, result.contents, external = false) { _ ->
-            Toast.makeText(
-                this,
-                getString(R.string.paired_and_connected_short),
-                Toast.LENGTH_SHORT,
-            ).show()
-            startServiceAfterPermissions()
-            refresh()
-        }) {
-            is PairingApplier.Decision.Applied -> Unit
-            is PairingApplier.Decision.PendingConfirmation -> Unit
-            is PairingApplier.Decision.Rejected ->
-                Toast.makeText(this, decision.reason, Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private val mainCameraLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) {
-            mainScanLauncher.launch(scanOptions())
-        } else {
-            Snackbar.make(
-                findViewById(android.R.id.content),
-                R.string.camera_denied,
-                Snackbar.LENGTH_LONG,
-            ).show()
-        }
-    }
-
     /**
      * First launch with no host profile → onboarding wizard (IDEAS #6).
      * Skipped permanently once a profile exists or the user opted out.
@@ -135,16 +101,6 @@ class MainActivity : AppCompatActivity() {
 
         bindRow(binding.rowAbout, R.drawable.ic_info, R.string.about_row)
             .setOnClickListener { startActivity(Intent(this, AboutActivity::class.java)) }
-
-        binding.scanQr.setOnClickListener {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                mainScanLauncher.launch(scanOptions())
-            } else {
-                mainCameraLauncher.launch(Manifest.permission.CAMERA)
-            }
-        }
 
         binding.connect.setOnClickListener {
             if (AgentHolder.agent != null) {

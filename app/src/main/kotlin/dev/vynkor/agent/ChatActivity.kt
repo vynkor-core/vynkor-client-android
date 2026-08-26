@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.ContextThemeWrapper
 import android.view.HapticFeedbackConstants
+import android.view.LayoutInflater
 import android.view.View
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -43,6 +44,7 @@ import com.google.android.material.snackbar.Snackbar
 import dev.vynkor.agent.agent.AiContext
 import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.databinding.ActivityChatBinding
+import dev.vynkor.agent.databinding.ItemProjectRowBinding
 import dev.vynkor.agent.agent.AgentHolder
 import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.agent.AgentService
@@ -270,6 +272,7 @@ class ChatActivity : AppCompatActivity() {
             drawer.closeDrawers()
         }
         binding.addProject.setOnClickListener { showNewProjectDialog() }
+        binding.projectsHeader.setOnClickListener { toggleProjects() }
         binding.settings.setOnClickListener {
             drawer.closeDrawers()
             startActivity(Intent(this, MainActivity::class.java))
@@ -306,12 +309,15 @@ class ChatActivity : AppCompatActivity() {
         if (intent?.getBooleanExtra(EXTRA_NEW_CHAT, false) == true &&
             savedInstanceState == null
         ) {
-            chat = Chat(projectId = selectedProjectId.orEmpty())
+            chat = Chat()
             adapter.submit(chat.messages)
             refreshTitle()
             updateWelcome()
         }
         restoreState(savedInstanceState)
+        intent?.getStringExtra(EXTRA_CHAT_ID)?.let { chatId ->
+            profile?.let { p -> ChatStore.load(this, p.id, chatId) }?.let { loadChat(it) }
+        }
         applySharedText(savedInstanceState == null)
         autoConnect()
 
@@ -558,14 +564,13 @@ class ChatActivity : AppCompatActivity() {
             if (active == null) getString(R.string.no_profile)
             else active.name.ifBlank { getString(R.string.unnamed_profile) }
         binding.drawerProfileName.setOnClickListener { showHostSwitcher() }
-        renderProjectChips()
+        renderProjectRows()
         val query = searchQuery.trim()
-        val all = if (active == null || query.isEmpty()) {
+        val filtered = if (active == null || query.isEmpty()) {
             if (active == null) emptyList() else ChatStore.list(this, active.id)
         } else {
             ChatStore.search(this, active.id, query)
         }
-        val filtered = selectedProjectId?.let { id -> all.filter { it.projectId == id } } ?: all
         binding.searchEmpty.visibility =
             if (query.isNotEmpty() && filtered.isEmpty()) View.VISIBLE else View.GONE
         drawerAdapter.submit(filtered, query = query.ifEmpty { null })
@@ -621,57 +626,50 @@ class ChatActivity : AppCompatActivity() {
 
     // ------------------------------------------------------------- projects
 
-    /** null = All chats (no project filter). */
-    private var selectedProjectId: String? = null
-
     /** Drawer chat-search text; blank = search off (plain list). */
     private var searchQuery: String = ""
 
     /** Message to scroll to + pulse after the next loadChat (search open). */
     private var pendingHighlightMessageId: String? = null
 
-    private fun renderProjectChips() {
+    /** Projects section fold state survives restarts. */
+    private var projectsExpanded: Boolean =
+        AppPrefs.projectsExpanded(this)
+
+    private fun toggleProjects() {
+        projectsExpanded = !projectsExpanded
+        AppPrefs.setProjectsExpanded(this, projectsExpanded)
+        renderProjectRows()
+    }
+
+    private fun renderProjectRows() {
         val active = profile
         val projects = if (active == null) emptyList() else ProjectStore.list(this, active.id)
-        // Drop the selection if its project was deleted.
-        if (selectedProjectId != null && projects.none { it.id == selectedProjectId }) {
-            selectedProjectId = null
-        }
-        val group = binding.projectChips
-        group.removeAllViews()
-        fun chip(label: String, checked: Boolean, onClick: () -> Unit): Chip {
-            val c = Chip(
-                ContextThemeWrapper(
-                    this,
-                    com.google.android.material.R.style.Widget_Material3_Chip_Filter,
-                )
-            )
-            c.text = label
-            c.isCheckable = true
-            c.isChecked = checked
-            c.setOnClickListener { onClick() }
-            c.setOnLongClickListener { onChipLongPress(label, onClick); true }
-            return c
-        }
-        group.addView(
-            chip(getString(R.string.all_chats), selectedProjectId == null) {
-                selectedProjectId = null
-                refreshChatList()
-            }
+        val inflater = LayoutInflater.from(this)
+        binding.projectsTitle.text = getString(R.string.projects_title)
+        binding.projectsCount.text = if (projects.isEmpty()) "" else getString(
+            R.string.projects_count_fmt,
+            projects.size,
         )
-        projects.forEach { p ->
-            group.addView(
-                chip(p.name, selectedProjectId == p.id) {
-                    selectedProjectId = p.id
-                    refreshChatList()
-                }
-            )
+        binding.projectsArrow.animate().rotation(if (projectsExpanded) 180f else 0f).setDuration(150).start()
+        binding.projectRows.visibility = if (projectsExpanded) View.VISIBLE else View.GONE
+        binding.projectRows.removeAllViews()
+        projects.forEach { project ->
+            val row = ItemProjectRowBinding.inflate(inflater, binding.projectRows, false)
+            row.projectName.text = project.name.ifBlank { getString(R.string.unnamed_profile) }
+            val chats = ChatStore.list(this, active?.id.orEmpty()).count { it.projectId == project.id }
+            row.projectCount.text = chats.toString()
+            row.root.setOnClickListener {
+                startActivity(ProjectChatsActivity.intent(this, active?.id.orEmpty(), project.id, project.name))
+            }
+            row.root.setOnLongClickListener { showProjectMenu(project); true }
+            binding.projectRows.addView(row.root)
         }
     }
 
-    private fun onChipLongPress(label: String, reselect: () -> Unit) {
+    /** Long-press on a project row: files / rename / delete. */
+    private fun showProjectMenu(project: dev.vynkor.agent.agent.Project) {
         val active = profile ?: return
-        val project = ProjectStore.list(this, active.id).firstOrNull { it.name == label } ?: return
         val options = arrayOf(
             getString(R.string.project_files_menu),
             getString(R.string.rename_chat),
@@ -681,10 +679,7 @@ class ChatActivity : AppCompatActivity() {
             .setTitle(project.name)
             .setItems(options) { _, which ->
                 when (which) {
-                    0 -> {
-                        ProjectFilesActivity.start(this, active.id, project.id, project.name)
-                        reselect()
-                    }
+                    0 -> ProjectFilesActivity.start(this, active.id, project.id, project.name)
                     1 -> {
                         val input = EditText(this)
                         input.hint = getString(R.string.project_name_hint)
@@ -713,7 +708,6 @@ class ChatActivity : AppCompatActivity() {
                             ProjectStore.delete(this, active.id, project.id)
                             ProjectFilesStore.deleteProjectDir(this, active.id, project.id)
                             ChatStore.clearProject(this, active.id, project.id)
-                            selectedProjectId = null
                             refreshChatList()
                             refreshTitle()
                         }
@@ -722,7 +716,6 @@ class ChatActivity : AppCompatActivity() {
                 }
             }
             .show()
-        reselect()
     }
 
     private fun showNewProjectDialog() {
@@ -741,8 +734,8 @@ class ChatActivity : AppCompatActivity() {
                 val name = input.text.toString().trim()
                 if (name.isNotBlank()) {
                     ProjectStore.save(this, active.id, Project(name = name))
-                    selectedProjectId = ProjectStore.list(this, active.id)
-                        .firstOrNull { it.name == name }?.id
+                    projectsExpanded = true
+                    AppPrefs.setProjectsExpanded(this, true)
                     refreshChatList()
                 }
             }
@@ -918,8 +911,9 @@ class ChatActivity : AppCompatActivity() {
         skipTypewriter()
         drafts[chat.id] = binding.input.text?.toString().orEmpty()
         discardPendingAttachments()
-        // A fresh chat lands in the currently selected project (if any).
-        chat = loaded ?: Chat(projectId = selectedProjectId.orEmpty())
+        // A fresh chat lands in the default inbox ("No project"); project
+        // chats are created from the project screen.
+        chat = loaded ?: Chat()
         adapter.chatId = chat.id
         adapter.submit(chat.messages)
         refreshTitle()
@@ -1680,6 +1674,9 @@ class ChatActivity : AppCompatActivity() {
         /** Widget/shortcut deep actions (voice or camera right after unlock). */
         const val EXTRA_AUTO_ACTION = "auto_action"
         const val EXTRA_NEW_CHAT = "extra_new_chat"
+
+        /** Cold-open a specific chat (project chat list). */
+        const val EXTRA_CHAT_ID = "extra_chat_id"
         const val AUTO_VOICE = "voice"
         const val AUTO_CAMERA = "camera"
 

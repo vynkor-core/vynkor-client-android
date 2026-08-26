@@ -54,6 +54,8 @@
 
     <string name="chats_title">Chats</string>
     <string name="projects_title">Projects</string>
+    <string name="projects_count_fmt">%1$d</string>
+    <string name="project_chats_empty">No chats in this project yet.</string>
     <string name="search_chats_hint">Search chats</string>
     <string name="clear_search">Clear search</string>
     <string name="no_search_results">Nothing found</string>
