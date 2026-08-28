@@ -1,6 +1,7 @@
 package dev.vynkor.agent.agent
 
 import android.content.Context
+import dev.vynkor.agent.R
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -87,6 +88,7 @@ object ChatStore {
             ensureLoaded(context, profileId)
             if (cache.getValue(profileId).removeAll { it.id == chatId }) {
                 scheduleWrite(context, profileId)
+                AttachmentStore.deleteChatDir(context, chatId)
             }
         }
     }
@@ -95,8 +97,10 @@ object ChatStore {
     fun clear(context: Context, profileId: String) {
         synchronized(lock) {
             ensureLoaded(context, profileId)
-            if (cache.getValue(profileId).isNotEmpty()) {
-                cache.getValue(profileId).clear()
+            val chats = cache.getValue(profileId)
+            if (chats.isNotEmpty()) {
+                chats.forEach { AttachmentStore.deleteChatDir(context, it.id) }
+                chats.clear()
                 scheduleWrite(context, profileId)
             }
         }
@@ -155,6 +159,45 @@ object ChatStore {
             if (idx < 0) return
             chats[idx] = chats[idx].copy(projectId = projectId.orEmpty())
             scheduleWrite(context, profileId)
+        }
+    }
+
+    /**
+     * Full clone of [chatId]: fresh ids everywhere (chat, messages,
+     * attachments) and attachment bytes copied into the new chat's store
+     * directory, so deleting either copy never orphans or breaks the other.
+     * Returns the new chat id, or null when the source is missing.
+     */
+    fun cloneChat(context: Context, profileId: String, chatId: String): String? {
+        synchronized(lock) {
+            ensureLoaded(context, profileId)
+            val src = cache.getValue(profileId).firstOrNull { it.id == chatId } ?: return null
+            val newId = java.util.UUID.randomUUID().toString()
+            val copiedMessages = src.messages.map { msg ->
+                val atts = msg.attachments.mapNotNull { att ->
+                    val from = AttachmentStore.fileFor(context, chatId, att)
+                    if (!from.exists()) return@mapNotNull null
+                    val copy = att.copy(id = java.util.UUID.randomUUID().toString())
+                    val to = AttachmentStore.fileFor(context, newId, copy)
+                    runCatching { from.copyTo(to, overwrite = true) }
+                        .getOrNull()?.takeIf { it.length() == from.length() } ?: return@mapNotNull null
+                    copy
+                }
+                msg.copy(id = java.util.UUID.randomUUID().toString(), attachments = atts)
+            }
+            val clone = src.copy(
+                id = newId,
+                // Title marks the twin; pinned state is not inherited.
+                title = context.getString(R.string.duplicate_title_fmt, src.title.ifBlank { context.getString(R.string.new_chat) }),
+                createdAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+                pinned = false,
+                messages = copiedMessages,
+            )
+            val chats = cache.getValue(profileId)
+            chats.add(clone)
+            scheduleWrite(context, profileId)
+            return newId
         }
     }
 
@@ -290,13 +333,25 @@ object ChatStore {
         put("project_id", chat.projectId)
         val msgs = JSONArray()
         chat.messages.forEach { m ->
-            msgs.put(
-                JSONObject()
-                    .put("id", m.id)
-                    .put("role", m.role)
-                    .put("content", m.content)
-                    .put("timestamp", m.timestamp),
-            )
+            val msgJson = JSONObject()
+                .put("id", m.id)
+                .put("role", m.role)
+                .put("content", m.content)
+                .put("timestamp", m.timestamp)
+            if (m.attachments.isNotEmpty()) {
+                val atts = JSONArray()
+                m.attachments.forEach { a ->
+                    atts.put(
+                        JSONObject()
+                            .put("id", a.id)
+                            .put("name", a.name)
+                            .put("mime", a.mime)
+                            .put("size_bytes", a.sizeBytes),
+                    )
+                }
+                msgJson.put("attachments", atts)
+            }
+            msgs.put(msgJson)
         }
         put("messages", msgs)
         put("pinned", chat.pinned)
@@ -308,6 +363,20 @@ object ChatStore {
         if (msgs != null) {
             for (i in 0 until msgs.length()) {
                 val m = msgs.getJSONObject(i)
+                val attachments = mutableListOf<Attachment>()
+                m.optJSONArray("attachments")?.let { atts ->
+                    for (j in 0 until atts.length()) {
+                        val a = atts.getJSONObject(j)
+                        attachments.add(
+                            Attachment(
+                                id = a.optString("id").ifBlank { UUID.randomUUID().toString() },
+                                name = a.optString("name"),
+                                mime = a.optString("mime", "application/octet-stream"),
+                                sizeBytes = a.optLong("size_bytes"),
+                            ),
+                        )
+                    }
+                }
                 messages.add(
                     ChatMessage(
                         // R-25: legacy rows have no id — a fresh UUID here is
@@ -316,6 +385,7 @@ object ChatStore {
                         role = m.optString("role"),
                         content = m.optString("content"),
                         timestamp = m.optLong("timestamp", System.currentTimeMillis()),
+                        attachments = attachments,
                     ),
                 )
             }

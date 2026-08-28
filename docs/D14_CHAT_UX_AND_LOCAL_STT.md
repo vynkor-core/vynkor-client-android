@@ -89,7 +89,7 @@ sherpa-onnx").
    don't expect `implementation("com.k2-fsa:…")`.
 2. **Model sizes are ~10× what casual docs suggest.** "small zipformer ru" is
    ~105 MB f32, whisper-tiny ~110 MB. The int8 `zipformer-ru-int8` (~71 MB)
-   from `veyron-plugins/models` is the practical Russian choice; its `tokens.txt`
+   from `vynkor-plugins/models` is the practical Russian choice; its `tokens.txt`
    uses BPE subwords (`▁`-prefixed) and `<blk>`/`<sos/eos>`/`<unk>` — the
    `bpe.model` file is **not** referenced by the transducer config (the host
    ignores it too).

@@ -102,12 +102,21 @@
                     app:tint="?attr/colorPrimary" />
 
                 <TextView
+                    android:id="@+id/welcomeGreeting"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
                     android:gravity="center"
-                    android:text="@string/welcome_title"
                     android:textAppearance="?attr/textAppearanceTitleLarge" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:gravity="center"
+                    android:text="@string/welcome_title"
+                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textColor="?attr/colorOnSurfaceVariant" />
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -234,51 +243,52 @@
                 android:paddingEnd="6dp"
                 android:paddingBottom="8dp">
 
-                <!-- Input row: the action button (mic ↔ send) lives in the
-                     bottom row, right slot — same position, icon swaps. -->
-                <EditText
-                    android:id="@+id/input"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:background="@null"
-                    android:hint="@string/chat_input_hint"
-                    android:inputType="textCapSentences|textMultiLine"
-                    android:maxLines="5"
-                    android:minHeight="46dp"
-                    android:paddingTop="12dp"
-                    android:paddingBottom="4dp"
-                    android:scrollbars="vertical"
-                    android:textAppearance="?attr/textAppearanceBodyLarge" />
+            <!-- Pending attachment chips (removed by tap before send). -->
+            <com.google.android.material.chip.ChipGroup
+                android:id="@+id/pendingAttachments"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:chipSpacingHorizontal="6dp"
+                app:singleLine="true" />
 
-                <!-- Model chip + action row. -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+            <!-- Input row: the action button (mic ↔ send) lives in the
+                 bottom row, right slot — same position, icon swaps. -->
+            <EditText
+                android:id="@+id/input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@null"
+                android:hint="@string/chat_input_hint"
+                android:inputType="textCapSentences|textMultiLine"
+                android:maxLines="5"
+                android:minHeight="46dp"
+                android:paddingTop="12dp"
+                android:paddingBottom="4dp"
+                android:scrollbars="vertical"
+                android:textAppearance="?attr/textAppearanceBodyLarge" />
 
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/agentChip"
-                        style="@style/Widget.Material3.Chip.Assist"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:checkable="false"
-                        android:text="@string/agent_fallback"
-                        android:textAppearance="?attr/textAppearanceLabelMedium" />
+            <!-- Action row: attach LEFT, mic/send RIGHT — model/agent live in
+                 the toolbar and chat settings, not here. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
-                    <com.google.android.material.chip.Chip
-                        android:id="@+id/modelChip"
-                        style="@style/Widget.Material3.Chip.Assist"
-                        android:layout_width="wrap_content"
-                        android:layout_height="36dp"
-                        android:checkable="false"
-                        android:text="@string/model_fallback"
-                        android:textAppearance="?attr/textAppearanceLabelMedium" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/attachButton"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:contentDescription="@string/attach_button"
+                    app:icon="@drawable/ic_add"
+                    app:iconGravity="textStart"
+                    app:iconTint="?attr/colorOnSurfaceVariant" />
 
-                    <Space
-                        android:layout_width="0dp"
-                        android:layout_height="1dp"
-                        android:layout_weight="1" />
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/composerAction"
@@ -359,38 +369,51 @@
             android:layout_marginEnd="16dp"
             android:layout_marginBottom="8dp"
             android:text="@string/new_chat"
-            android:textColor="@color/on_primary_container"
-            app:backgroundTint="@color/primary_container"
+            android:textColor="?attr/colorOnPrimaryContainer"
+            app:backgroundTint="?attr/colorPrimaryContainer"
             app:icon="@drawable/ic_add"
-            app:iconTint="@color/on_primary_container" />
+            app:iconTint="?attr/colorOnPrimaryContainer" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="8dp"
-            android:layout_marginEnd="20dp"
-            android:layout_marginBottom="4dp"
-            android:text="@string/chats_title"
-            android:textAppearance="?attr/textAppearanceTitleMedium"
-            android:textColor="?attr/colorOnSurfaceVariant" />
-
-        <!-- Projects: filter chips (All + user projects), + to create. -->
+        <!-- Projects: collapsible list (one row when folded). Tap a project
+             to open its chat list in a dedicated screen; long-press for
+             files/rename/delete. -->
         <LinearLayout
+            android:id="@+id/projectsHeader"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:layout_marginTop="10dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="4dp"
             android:layout_marginEnd="12dp"
+            android:background="?attr/selectableItemBackground"
             android:gravity="center_vertical"
-            android:orientation="horizontal">
+            android:minHeight="44dp"
+            android:orientation="horizontal"
+            android:paddingStart="12dp">
+
+            <ImageView
+                android:id="@+id/projectsArrow"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/ic_arrow_down"
+                app:tint="?attr/colorOnSurfaceVariant" />
 
             <TextView
+                android:id="@+id/projectsTitle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
                 android:layout_weight="1"
                 android:text="@string/projects_title"
-                android:textAppearance="?attr/textAppearanceTitleMedium"
+                android:textAppearance="?attr/textAppearanceTitleSmall"
+                android:textColor="?attr/colorOnSurfaceVariant" />
+
+            <TextView
+                android:id="@+id/projectsCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:textAppearance="?attr/textAppearanceLabelMedium"
                 android:textColor="?attr/colorOnSurfaceVariant" />
 
             <com.google.android.material.button.MaterialButton
@@ -403,35 +426,30 @@
                 app:iconTint="?attr/colorPrimary" />
         </LinearLayout>
 
-        <HorizontalScrollView
+        <LinearLayout
+            android:id="@+id/projectRows"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingStart="16dp"
-            android:scrollbars="none">
-
-            <com.google.android.material.chip.ChipGroup
-                android:id="@+id/projectChips"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                app:chipSpacingHorizontal="6dp"
-                app:selectionRequired="true"
-                app:singleLine="true"
-                app:singleSelection="true" />
-        </HorizontalScrollView>
+            android:divider="?android:attr/listDivider"
+            android:orientation="vertical"
+            android:showDividers="middle" />
 
         <!-- Search across chat titles AND message contents; filters the
-             list below in combination with the selected project chip. -->
+             list below. Filled pill so it reads as the drawer's main tool. -->
         <com.google.android.material.textfield.TextInputLayout
             android:id="@+id/drawerSearchLayout"
-            style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+            style="@style/Widget.Material3.TextInputLayout.FilledBox.Dense"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:layout_marginTop="10dp"
             android:layout_marginEnd="16dp"
             android:hint="@string/search_chats_hint"
+            app:boxBackgroundColor="?attr/colorSurfaceVariant"
             app:endIconContentDescription="@string/clear_search"
             app:endIconMode="clear_text"
+            app:endIconTint="?attr/colorOnSurfaceVariant"
+            app:shapeAppearanceOverlay="@style/ShapeAppearance.Vynkor.Pill"
             app:startIconContentDescription="@string/search_chats_hint"
             app:startIconDrawable="@drawable/ic_search"
             app:startIconTint="?attr/colorOnSurfaceVariant">
@@ -445,6 +463,17 @@
                 android:maxLines="1"
                 android:textAppearance="?attr/textAppearanceBodyMedium" />
         </com.google.android.material.textfield.TextInputLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginTop="10dp"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="4dp"
+            android:text="@string/chats_title"
+            android:textAppearance="?attr/textAppearanceTitleMedium"
+            android:textColor="?attr/colorOnSurfaceVariant" />
 
         <TextView
             android:id="@+id/searchEmpty"

@@ -30,7 +30,7 @@ Kotlin (device I/O)  ── UniFFI ──▶  Rust core (protocol engine)  ─�
   NotificationListener
 ```
 
-- **Rust core = protocol only.** Framing/MAC/proto from `veyron-wire` 0.2.3 (proto v1.6),
+- **Rust core = protocol only.** Framing/MAC/proto from `vynkor-wire` 0.2.3 (proto v1.6),
   used verbatim — no reimplementation of crypto.
 - **One WS connection per capability**, each registering as `{device_id}.{cap}`
   (the D-14 naming decision; supersedes the D-06 bridge's literal `device.{cap}`).
@@ -70,7 +70,7 @@ Kotlin (device I/O)  ── UniFFI ──▶  Rust core (protocol engine)  ─�
 
 ### 1. Frame → WS byte layout is manual, never `write_frame_raw`
 
-`veyron-wire` has **no** `frame_to_bytes`/`parse_frame` in its public API (the
+`vynkor-wire` has **no** `frame_to_bytes`/`parse_frame` in its public API (the
 kernel's copies are `pub(crate)`). Over WS you must serialize manually:
 
 ```rust
@@ -85,7 +85,7 @@ let frame = read_frame(&mut cursor).await?;
 ```
 
 **Never** call `write_frame_raw` over WS: it auto-zstd-compresses payloads ≥64 KiB,
-which the gateway rejects (R5-03). The SDK (`veyron-sdk-rust/src/client.rs`
+which the gateway rejects (R5-03). The SDK (`vynkor-sdk-rust/src/client.rs`
 `Transport::Ws`) is the canonical reference for this pattern.
 
 ### 2. MAC covers the header with `FLAG_MAC_PRESENT` already set
@@ -117,7 +117,7 @@ The register→ack handshake runs **before** the session key exists. Order:
 2. read `PluginRegisterAck { accepted, session_nonce }` (16 random bytes when the
    host has a `jwt_secret`)
 3. `session_key = derive_session_key(jwt_secret, session_nonce, plugin_id)`
-   (HKDF-SHA256, salt=nonce, IKM=jwt_secret, info=`veyron-frame-mac-v1|{plugin_id}`)
+   (HKDF-SHA256, salt=nonce, IKM=jwt_secret, info=`vynkor-frame-mac-v1|{plugin_id}`)
 4. arm MAC from here on
 
 ### 4. JWT `sub` must equal `device_id` (or `plugin_id`)
@@ -244,10 +244,10 @@ Environment: host on LAN `192.168.1.157`, phone on the same Wi-Fi
 (`192.168.1.128`, Android 13). Kernel built `--release`, run with a config:
 
 ```yaml
-# /tmp/veyron-d14-config.yaml
+# /tmp/vyn-d14-config.yaml
 port: 8888
 log_level: debug
-data_dir: /tmp/veyron-d14
+data_dir: /tmp/vyn-d14
 jwt_secret: "d14-local-test-secret-change-me-0123456789"  # ≥32 bytes!
 tls: false              # plain WS for the LAN test (app can't verify self-signed)
 bind: 0.0.0.0           # D-07: host role + auth → binds all interfaces
@@ -258,7 +258,7 @@ ws_register_timeout_secs: 15
    HS256 secret (`jwt_secret is 31 bytes, must be at least 32 bytes`).
 2. Mint the device token (sub must equal the app's Device ID):
    ```bash
-   vyn token --config /tmp/veyron-d14-config.yaml mint \
+   vyn token --config /tmp/vyn-d14-config.yaml mint \
      --device d14-test-phone \
      --permissions "PERMISSION_IPC_SEND,PERMISSION_EVENT_PUBLISH,PERMISSION_AUDIO_STREAM" \
      --ipc-targets kernel --ttl-seconds 86400

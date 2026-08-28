@@ -92,6 +92,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="14dp"
                     android:text="@string/connect_button" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -127,7 +128,34 @@
                     android:background="?android:attr/listDivider" />
 
                 <include
+                    android:id="@+id/rowCaps"
+                    layout="@layout/item_settings_row" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?android:attr/listDivider" />
+
+                <include
                     android:id="@+id/rowAppearance"
+                    layout="@layout/item_settings_row" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?android:attr/listDivider" />
+
+                <include
+                    android:id="@+id/rowLanguage"
+                    layout="@layout/item_settings_row" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?android:attr/listDivider" />
+
+                <include
+                    android:id="@+id/rowNotifLook"
                     layout="@layout/item_settings_row" />
 
                 <View
@@ -155,6 +183,15 @@
 
                 <include
                     android:id="@+id/rowData"
+                    layout="@layout/item_settings_row" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="?android:attr/listDivider" />
+
+                <include
+                    android:id="@+id/rowDiagnostics"
                     layout="@layout/item_settings_row" />
 
                 <View

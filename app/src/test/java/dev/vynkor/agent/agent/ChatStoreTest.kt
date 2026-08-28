@@ -110,6 +110,50 @@ class ChatStoreTest {
     }
 
     @Test
+    fun `cloneChat makes an independent twin with fresh ids`() {
+        val att = Attachment(name = "a.txt", mime = "text/plain", sizeBytes = 2)
+        val chat = Chat(
+            title = "origin",
+            projectId = "proj",
+            pinned = true,
+            messages = listOf(msg("user", "hello").copy(attachments = listOf(att))),
+        )
+        ChatStore.save(context, "p1", chat)
+        // The attachment bytes must exist for the copy step.
+        val srcFile = AttachmentStore.fileFor(context, chat.id, att)
+        srcFile.parentFile?.mkdirs()
+        srcFile.writeText("hi")
+
+        val cloneId = ChatStore.cloneChat(context, "p1", chat.id)
+        assertNotNull(cloneId)
+        ChatStore.awaitPendingWrites()
+
+        val clone = ChatStore.load(context, "p1", cloneId!!)
+        assertNotNull(clone)
+        assertNotEquals(chat.id, clone!!.id)
+        assertEquals("Copy — origin", clone.title)
+        assertFalse(clone.pinned)
+        assertEquals("proj", clone.projectId)
+        assertEquals(1, clone.messages.size)
+        assertNotEquals(chat.messages[0].id, clone.messages[0].id)
+
+        val clonedAtt = clone.messages[0].attachments.single()
+        assertNotEquals(att.id, clonedAtt.id)
+        assertTrue(AttachmentStore.fileFor(context, cloneId, clonedAtt).exists())
+
+        // Deleting the original leaves the twin fully intact.
+        ChatStore.delete(context, "p1", chat.id)
+        val survivor = ChatStore.load(context, "p1", cloneId)
+        assertNotNull(survivor)
+        assertEquals("hello", survivor!!.messages[0].content)
+    }
+
+    @Test
+    fun `cloneChat of missing id returns null`() {
+        assertNull(ChatStore.cloneChat(context, "p1", "nope"))
+    }
+
+    @Test
     fun `rename updates the stored title`() {
         ChatStore.save(context, "p6", Chat(id = "r", title = "old"))
         ChatStore.awaitPendingWrites()

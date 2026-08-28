@@ -59,7 +59,7 @@
         android:layout_gravity="bottom|end"
         android:layout_margin="16dp"
         android:contentDescription="@string/add_profile"
-        app:backgroundTint="@color/primary_container"
+        app:backgroundTint="?attr/colorPrimaryContainer"
         app:srcCompat="@drawable/ic_add"
-        app:tint="@color/on_primary_container" />
+        app:tint="?attr/colorOnPrimaryContainer" />
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

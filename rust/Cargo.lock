@@ -1696,23 +1696,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "veyron-wire"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57d839f3d759fb0ba8cfe08e871804a7f18fd18e92d63926cb2731f7f3b5ecf3"
-dependencies = [
- "crc32fast",
- "hkdf",
- "hmac",
- "nix",
- "prost",
- "prost-build",
- "sha2",
- "tokio",
- "zstd",
-]
-
-[[package]]
 name = "vynkor-agent-core"
 version = "0.1.0"
 dependencies = [
@@ -1730,7 +1713,22 @@ dependencies = [
  "tracing-subscriber",
  "uniffi",
  "url",
- "veyron-wire",
+ "vynkor-wire",
+]
+
+[[package]]
+name = "vynkor-wire"
+version = "0.0.3"
+dependencies = [
+ "crc32fast",
+ "hkdf",
+ "hmac",
+ "nix",
+ "prost",
+ "prost-build",
+ "sha2",
+ "tokio",
+ "zstd",
 ]
 
 [[package]]

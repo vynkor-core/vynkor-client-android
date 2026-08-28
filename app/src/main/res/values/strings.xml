@@ -17,11 +17,18 @@
     <string name="status_connected">Connected</string>
     <string name="connect_button">Connect</string>
     <string name="disconnect_button">Disconnect</string>
+    <string name="service_channel_quiet_name">vynkor agent (quiet)</string>
+    <string name="notif_look_title">Service notification</string>
+    <string name="notif_mode_detailed">Detailed — status &amp; actions</string>
+    <string name="notif_mode_minimal">Minimal — title only</string>
+    <string name="notif_mode_hidden">Hidden — collapsed, silent</string>
+    <string name="notification_new_chat">New chat</string>
     <string name="stop_button">Stop</string>
     <string name="scan_button">Scan QR</string>
     <string name="scan_prompt">Point at the host\'s pairing QR (vyn device connect)</string>
     <string name="scan_cancelled">Scan cancelled</string>
     <string name="camera_denied">Camera permission denied — allow it to scan pairing QR codes</string>
+    <string name="open_settings">Settings</string>
     <string name="paired_and_connected">Paired with %1$s</string>
     <string name="no_profile">No profile</string>
     <string name="unnamed_profile">Unnamed</string>
@@ -47,6 +54,8 @@
 
     <string name="chats_title">Chats</string>
     <string name="projects_title">Projects</string>
+    <string name="projects_count_fmt">%1$d</string>
+    <string name="project_chats_empty">No chats in this project yet.</string>
     <string name="search_chats_hint">Search chats</string>
     <string name="clear_search">Clear search</string>
     <string name="no_search_results">Nothing found</string>
@@ -67,6 +76,12 @@
     <string name="delete_project">Delete project</string>
     <string name="delete_project_confirm">Delete this project? Its chats move to “No project”.</string>
     <string name="all_chats">All chats</string>
+    <string name="generation_stopped">Stopped waiting for the answer</string>
+    <string name="conv_mode_title">Conversation mode</string>
+    <string name="conv_mode_hint">After reading a reply aloud, start listening again automatically — hands-free dialogue</string>
+    <string name="chat_duplicate">Duplicate</string>
+    <string name="duplicate_title_fmt">Copy — %1$s</string>
+    <string name="chat_duplicated">Chat duplicated</string>
     <string name="move_to_project">Move to project</string>
     <string name="no_project_item">No project</string>
     <string name="new_chat">New chat</string>
@@ -132,12 +147,27 @@
     <string name="theme_system">Follow system</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <string name="appearance_theme_section">Theme</string>
+    <string name="appearance_accent_section">Accent</string>
+    <string name="accent_blue">Blue</string>
+    <string name="accent_green">Green</string>
+    <string name="accent_purple">Purple</string>
+    <string name="accent_orange">Orange</string>
+    <string name="accent_rose">Rose</string>
     <string name="chat_behavior_title">Chat</string>
     <string name="chat_behavior_typewriter">Typewriter reply animation</string>
     <string name="chat_behavior_haptics">Haptic feedback</string>
     <string name="chat_behavior_typewriter_short">Typewriter</string>
     <string name="chat_behavior_haptics_short">Haptics</string>
     <string name="chat_behavior_all_off">Off</string>
+    <string name="chat_settings_title">Chat settings</string>
+    <string name="chat_behavior_typewriter_hint">Reveal replies progressively</string>
+    <string name="chat_behavior_haptics_hint">Vibrate on send and dictation</string>
+    <string name="model_not_set">Not set — host default is used</string>
+    <string name="agent_none">No agent (raw model)</string>
+    <string name="agents_unavailable_hint">Connect to a host to load its agent list</string>
+    <string name="about_version_fmt">v%1$s</string>
+    <string name="about_made_with">Rust protocol core · Kotlin device agent · UniFFI</string>
     <string name="data_title">Data</string>
     <string name="data_export">Export backup…</string>
     <string name="data_import">Import backup…</string>
@@ -154,9 +184,14 @@
     <string name="password_title">Backup password</string>
     <string name="password_hint">Password (min 4 characters)</string>
     <string name="replace_button">Replace</string>
+    <string name="paired_and_connected_short">Paired</string>
+    <string name="hosts_manage_row">Manage hosts…</string>
+    <string name="hosts_switched_to">Switched to %1$s</string>
     <string name="hosts_count_fmt">%1$d configured</string>
     <string name="security_subtitle_bio">Fingerprint · auto-lock</string>
     <string name="security_subtitle_pin">PIN · fingerprint · auto-lock</string>
+    <string name="diagnostics_title">Diagnostics</string>
+    <string name="diagnostics_share">Share…</string>
     <string name="about_row">About</string>
     <string name="about_body">vynkor agent v%1$s\nAndroid device-agent for the vynkor plugin kernel.\n\nLicensed under Apache-2.0 or MIT.</string>
     <string name="app_lock">App lock</string>
@@ -185,4 +220,124 @@
     <string name="pair_confirm_message">Host: %1$s\nDevice ID: %2$s\n\nContinue only if you scanned this QR code yourself or trust its source.</string>
     <string name="pair_confirm_yes">Connect</string>
     <string name="pair_confirm_no">Cancel</string>
+
+    <!-- Quick settings tile -->
+    <string name="tile_label">vynkor agent</string>
+    <string name="tile_subtitle_on">Running</string>
+    <string name="tile_subtitle_off">Stopped</string>
+
+    <!-- Home-screen widget -->
+    <string name="widget_online">Connected</string>
+    <string name="widget_offline">Offline</string>
+    <string name="widget_start">Start</string>
+    <string name="widget_stop">Stop</string>
+    <string name="widget_online_host_fmt">Connected · %1$s</string>
+    <string name="widget_qa_torch">Torch</string>
+    <string name="widget_qa_dnd">DND</string>
+    <string name="widget_qa_ringer">Ringer</string>
+    <string name="widget_qa_agent">Agent</string>
+    <string name="widget_tile_chat">Chat</string>
+    <string name="widget_tile_voice">Voice</string>
+    <string name="widget_tile_camera">Camera</string>
+
+    <!-- Capabilities-permissions screen -->
+    <string name="caps_permissions_title">Capabilities</string>
+    <string name="caps_subtitle_fmt">Location/mic/contacts: %1$d of %2$d on</string>
+    <string name="caps_permissions_hint">Sensitive device data is only shared when the matching permission is granted. Grant on demand — the agent works without the rest.</string>
+    <string name="perm_row_subtitle_fmt">%1$s · %2$s</string>
+    <string name="perm_on">on</string>
+    <string name="perm_off">off</string>
+    <string name="perm_already_granted_title">Already granted</string>
+    <string name="perm_already_granted_body">This capability is active — the host can use it right now.</string>
+    <string name="perm_location_title">Location</string>
+    <string name="perm_location_subtitle">geo capability, Wi-Fi scan names</string>
+    <string name="perm_contacts_title">Contacts</string>
+    <string name="perm_contacts_subtitle">contacts lookup by name</string>
+    <string name="perm_mic_title">Microphone</string>
+    <string name="perm_mic_subtitle">dictation and host-streamed mic</string>
+    <string name="perm_sms_title">SMS</string>
+    <string name="perm_sms_subtitle">read-only inbox search for the host AI</string>
+    <string name="perm_calls_title">Call log</string>
+    <string name="perm_calls_subtitle">recent calls with names and duration</string>
+    <string name="perm_calendar_title">Calendar</string>
+    <string name="perm_calendar_subtitle">upcoming events; host may add events</string>
+    <string name="perm_bluetooth_title">Nearby devices</string>
+    <string name="perm_bluetooth_subtitle">paired Bluetooth devices list</string>
+    <string name="perm_write_settings_title">Modify system settings</string>
+    <string name="perm_write_settings_subtitle">brightness control from the host</string>
+    <string name="perm_dnd_title">Do Not Disturb access</string>
+    <string name="perm_dnd_subtitle">toggle DND and silent mode from the host</string>
+
+    <!-- Chat attachments -->
+    <string name="attach_button">Attach file</string>
+    <string name="attach_photo">Photo or video</string>
+    <string name="attach_camera_photo">Take photo</string>
+    <string name="camera_capture_failed">Could not start the camera</string>
+    <string name="attach_file">Any file</string>
+    <string name="attachment_image_desc">Attached image %1$s</string>
+    <string name="attachment_video_badge">Video</string>
+    <string name="attachment_open">Open attachment</string>
+    <string name="attachment_remove">Remove attachment</string>
+    <string name="attachment_too_large_fmt">“%1$s” is too large (max %2$s)</string>
+    <string name="attachment_failed_copy">Could not copy “%1$s” into the secure store</string>
+    <string name="attachments_pending_fmt">%1$d attached</string>
+
+    <!-- Project files -->
+    <string name="project_files_title">Project files</string>
+    <string name="project_files_title_fmt">Files · %1$s</string>
+    <string name="project_files_add">Add files</string>
+    <string name="project_files_empty">No files yet. Files added here are injected as context into every chat of this project.</string>
+    <string name="project_files_delete">Delete file</string>
+    <string name="project_files_delete_confirm_fmt">Remove “%1$s” from this project?</string>
+    <string name="project_files_menu">Project files…</string>
+    <string name="files_count_fmt">%1$d file(s)</string>
+    <string name="file_view_failed">No app can preview this file</string>
+    <string name="file_added_fmt">“%1$s” added to the project</string>
+    <string name="attachment_failed_copy_generic">Could not copy the selected file(s)</string>
+    <string name="context_included_note_fmt">%1$d file(s) will be sent to the AI as project context.</string>
+
+    <!-- Drawer chat-list day grouping -->
+    <string name="day_today">Today</string>
+    <string name="day_yesterday">Yesterday</string>
+    <string name="day_earlier">Earlier</string>
+
+    <!-- Welcome greeting -->
+    <string name="greeting_morning">Good morning</string>
+    <string name="greeting_afternoon">Good afternoon</string>
+    <string name="greeting_evening">Good evening</string>
+    <string name="greeting_night">Good night</string>
+
+    <!-- Language picker -->
+    <string name="language_title">Language</string>
+    <string name="language_system">System default</string>
+    <string name="language_english">English</string>
+    <string name="language_russian">Русский</string>
+
+    <!-- Onboarding wizard -->
+    <string name="setup_welcome_body">This phone becomes a device-agent for your vynkor host: the AI on the host can use its mic, camera, location and more — you control what is allowed.</string>
+    <string name="setup_scan_button">Scan pairing QR</string>
+    <string name="setup_manual_button">Enter manually</string>
+    <string name="setup_skip_button">Skip for now</string>
+    <string name="setup_perms_title">Permissions</string>
+    <string name="setup_perms_hint">Everything here is optional. Without a grant the matching capability stays off — the rest of the agent keeps working.</string>
+    <string name="setup_perms_continue">Continue</string>
+    <string name="wizard_perm_camera_title">Camera</string>
+    <string name="wizard_perm_camera_subtitle">QR pairing and photo capture</string>
+    <string name="wizard_perm_location_title">Location</string>
+    <string name="wizard_perm_location_subtitle">geo capability and Wi-Fi names</string>
+    <string name="wizard_perm_mic_title">Microphone</string>
+    <string name="wizard_perm_mic_subtitle">dictation and voice chat</string>
+    <string name="wizard_perm_contacts_title">Contacts</string>
+    <string name="wizard_perm_contacts_subtitle">contact lookup by name</string>
+    <string name="wizard_perm_notif_title">Notifications</string>
+    <string name="wizard_perm_notif_subtitle">show the connection status notice</string>
+    <string name="wizard_perm_granted">Granted</string>
+    <string name="wizard_perm_missing">Tap to grant</string>
+    <string name="setup_done_title">You are set!</string>
+    <string name="setup_done_body">The phone is connected to your host as a device-agent.</string>
+    <string name="setup_done_open">Open vynkor</string>
+    <string name="wizard_skip_confirm_title">Skip setup?</string>
+    <string name="wizard_skip_confirm_body">You can pair later from Settings → Hosts.</string>
+    <string name="wizard_skip_yes">Skip</string>
+    <string name="wizard_skip_no">Continue setup</string>
 </resources>

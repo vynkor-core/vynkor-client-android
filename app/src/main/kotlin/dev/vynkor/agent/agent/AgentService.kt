@@ -19,10 +19,21 @@ import dev.vynkor.agent.ConnectionStatus
 import dev.vynkor.agent.R
 import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.caps.BatteryProviderImpl
+import dev.vynkor.agent.caps.BluetoothProviderImpl
+import dev.vynkor.agent.caps.BrightnessProviderImpl
+import dev.vynkor.agent.caps.CalendarProviderImpl
+import dev.vynkor.agent.caps.CallsProviderImpl
 import dev.vynkor.agent.caps.ClipboardProviderImpl
 import dev.vynkor.agent.caps.ContactsProviderImpl
+import dev.vynkor.agent.caps.DeviceInfoProviderImpl
+import dev.vynkor.agent.caps.DndProviderImpl
+import dev.vynkor.agent.caps.FlashlightProviderImpl
+import dev.vynkor.agent.caps.LauncherProviderImpl
 import dev.vynkor.agent.caps.LocationProviderImpl
+import dev.vynkor.agent.caps.RingerProviderImpl
+import dev.vynkor.agent.caps.SmsProviderImpl
 import dev.vynkor.agent.caps.SpeakerSinkImpl
+import dev.vynkor.agent.caps.WifiProviderImpl
 import java.util.concurrent.Executors
 
 /** Foreground service holding the agent connection. One per active host. */
@@ -45,6 +56,7 @@ class AgentService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        current = this
         createChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
     }
@@ -74,7 +86,9 @@ class AgentService : Service() {
             certPem = profile.certPem,
             deviceId = profile.deviceId,
             capabilities = listOf(
-                "geo", "battery", "notifications", "clipboard", "contacts", "mic", "speaker", "chat"
+                "geo", "battery", "notifications", "clipboard", "contacts", "mic", "speaker", "chat",
+                "device", "wifi", "bluetooth", "dnd", "ringer", "brightness",
+                "flashlight", "launcher", "sms", "calls", "calendar",
             ),
             osVersion = Build.VERSION.RELEASE,
             arch = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
@@ -88,6 +102,17 @@ class AgentService : Service() {
         val speaker = SpeakerSinkImpl()
         a.setSpeaker(speaker)
         sink = speaker
+        a.setDeviceInfo(DeviceInfoProviderImpl(this))
+        a.setWifi(WifiProviderImpl(this))
+        a.setBluetooth(BluetoothProviderImpl(this))
+        a.setDnd(DndProviderImpl(this))
+        a.setRinger(RingerProviderImpl(this))
+        a.setBrightness(BrightnessProviderImpl(this))
+        a.setFlashlight(FlashlightProviderImpl(this))
+        a.setLauncher(LauncherProviderImpl(this))
+        a.setSms(SmsProviderImpl(this))
+        a.setCalls(CallsProviderImpl(this))
+        a.setCalendar(CalendarProviderImpl(this))
 
         val hostLabel = profile.name.ifBlank {
             profile.hostUrl.substringAfter("://").substringBefore(':')
@@ -98,12 +123,14 @@ class AgentService : Service() {
                 AgentHolder.connectionState.value = connected
                 AgentHolder.hostStatus.value =
                     if (connected) HostStatus.Connected else HostStatus.Reconnecting
+                EventLog.push("agent", if (connected) "connected" else "reconnecting")
                 connectionLine = if (connected) {
                     getString(R.string.service_connected_to, hostLabel)
                 } else {
                     getString(R.string.service_reconnecting)
                 }
                 updateNotification()
+                dev.vynkor.agent.WidgetSync.pushAll(this@AgentService)
             }
 
             override fun onStatus(status: ConnectionStatus) {
@@ -116,6 +143,7 @@ class AgentService : Service() {
                         if (!AgentHolder.connectionState.value) {
                             AgentHolder.hostStatus.value =
                                 HostStatus.Unreachable(status.reason)
+                            EventLog.push("agent", "unreachable: ${status.reason}")
                         }
                 }
             }
@@ -144,6 +172,7 @@ class AgentService : Service() {
         AgentHolder.connectionState.value = false
         AgentHolder.micStreaming.value = false
         AgentHolder.hostStatus.value = HostStatus.Idle
+        dev.vynkor.agent.WidgetSync.pushAll(this)
         // Audio teardown involves bounded joins (MicCapture.stop) and Rust
         // runtime shutdown — keep both off the main thread (R-04).
         cleanupExecutor.execute {
@@ -166,6 +195,7 @@ class AgentService : Service() {
     }
 
     override fun onDestroy() {
+        current = null
         stopAgent()
         super.onDestroy()
     }
@@ -177,34 +207,76 @@ class AgentService : Service() {
                 CHANNEL_ID, getString(R.string.service_channel_name), NotificationManager.IMPORTANCE_LOW
             )
         )
+        // "Hidden" mode target: IMPORTANCE_MIN collapses the notice to the
+        // bottom section with no heads-up, sound or lock-screen presence.
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_QUIET,
+                getString(R.string.service_channel_quiet_name),
+                NotificationManager.IMPORTANCE_MIN,
+            )
+        )
     }
 
+    /**
+     * Detail level follows AppPrefs.notifMode: detailed = status line +
+     * actions; minimal = title only on the regular channel; hidden = title
+     * only on the IMPORTANCE_MIN channel (as invisible as a foreground
+     * service legally gets).
+     */
     private fun buildNotification(): Notification {
+        val mode = dev.vynkor.agent.agent.AppPrefs.notifMode(this)
+        val detailed = mode == dev.vynkor.agent.agent.AppPrefs.NOTIF_DETAILED
+        val channel = if (mode == dev.vynkor.agent.agent.AppPrefs.NOTIF_HIDDEN) CHANNEL_QUIET else CHANNEL_ID
         val stopIntent = PendingIntent.getService(
             this, 0, Intent(this, AgentService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val contentIntent = PendingIntent.getActivity(
-            this, 0, Intent(this, ChatActivity::class.java),
+        val openIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, ChatActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val newChatIntent = PendingIntent.getActivity(
+            this, 1,
+            Intent(this, ChatActivity::class.java)
+                .putExtra(ChatActivity.EXTRA_NEW_CHAT, true),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = NotificationCompat.Builder(this, channel)
             .setContentTitle(getString(R.string.service_notification_title))
-            .setContentText(connectionLine ?: getString(R.string.service_notification_text))
             .setSmallIcon(R.drawable.ic_stat_vynkor)
-            .setContentIntent(contentIntent)
+            .setColor(androidx.core.content.ContextCompat.getColor(this, R.color.primary))
+            .setContentIntent(openIntent)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setLocalOnly(true)
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .addAction(0, getString(R.string.disconnect_button), stopIntent)
-            .build()
+        if (detailed) {
+            builder.setContentText(connectionLine ?: getString(R.string.service_notification_text))
+                .addAction(0, getString(R.string.notification_new_chat), newChatIntent)
+                .addAction(0, getString(R.string.disconnect_button), stopIntent)
+        }
+        return builder.build()
     }
 
     companion object {
         private const val TAG = "AgentService"
         private const val CHANNEL_ID = "vynkor_agent"
+        private const val CHANNEL_QUIET = "vynkor_agent_quiet"
+
+        @Volatile
+        private var current: AgentService? = null
+
+        /** Re-renders the running notification after a pref change. */
+        fun refreshNotification(context: Context) {
+            current?.updateNotification()
+        }
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "dev.vynkor.agent.STOP"
 
         fun start(context: Context) {
+        EventLog.push("service", "start requested")
             val intent = Intent(context, AgentService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -214,6 +286,7 @@ class AgentService : Service() {
         }
 
         fun stop(context: Context) {
+        EventLog.push("service", "stop")
             context.startService(Intent(context, AgentService::class.java).setAction(ACTION_STOP))
         }
     }

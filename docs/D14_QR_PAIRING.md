@@ -75,13 +75,13 @@ Payload JSON (base64url, no padding) carried in `vynkor://pair?d=...`:
 
 ```bash
 # existing device (matches the app's "local-host" profile: id + secret must agree)
-vyn device --config /tmp/veyron-e2e/config.yaml connect \
+vyn device --config /tmp/vyn-e2e/config.yaml connect \
   --device d14-test-phone --host 192.168.1.157 \
   --permissions "PERMISSION_IPC_SEND,PERMISSION_EVENT_PUBLISH,PERMISSION_AUDIO_STREAM" \
   --ipc-targets kernel --qr-out /tmp/pair.svg
 
 # brand-new device (id auto-generated, or --device my-new-phone)
-vyn device --config /tmp/veyron-e2e/config.yaml connect \
+vyn device --config /tmp/vyn-e2e/config.yaml connect \
   --host 100.64.0.2 \
   --permissions "PERMISSION_IPC_SEND,PERMISSION_EVENT_PUBLISH,PERMISSION_AUDIO_STREAM" \
   --ipc-targets kernel --qr-out /tmp/pair.svg
@@ -92,7 +92,7 @@ Flags: `--device` (JWT sub), `--name`, `--host` (advertise URL), `--permissions`
 
 ## Implementation map
 
-**Kernel (`veyron`):**
+**Kernel (`vynkor`):**
 `src/cli/device.rs` (new — resolve advertise URL, mint token, read
 `effective_tls_cert_path`, build payload, render QR), `cli/mod.rs` + `main.rs`
 (wire the `Device` subcommand), `Cargo.toml` (`qrcode`, `base64`).

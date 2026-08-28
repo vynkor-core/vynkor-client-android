@@ -4,7 +4,7 @@
 //! boundary; Kotlin owns Android device I/O (mic/speaker, battery, location,
 //! clipboard, contacts, notifications).
 //!
-//! Design: veyron kernel repo, `docs/ANDROID_DEVICE_AGENT.md` +
+//! Design: vynkor kernel repo, `docs/ANDROID_DEVICE_AGENT.md` +
 //! `docs/ANDROID_DEVICE_AGENT_RUST_CORE.md`.
 
 uniffi::setup_scaffolding!();

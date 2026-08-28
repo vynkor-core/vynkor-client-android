@@ -1,17 +1,17 @@
 //! Frame build/parse, MAC arm/verify, and kernel-routed classification.
 //!
-//! Reuses `veyron_wire` verbatim for the wire types. WS byte handling is
+//! Reuses `vynkor_wire` verbatim for the wire types. WS byte handling is
 //! manual (`serialize_header` + payload + optional tag) — `write_frame_raw`
 //! would auto-zstd payloads ≥64 KiB, which the WS gateway rejects (R5-03).
 
 use prost::Message;
-use veyron_wire::framing::{serialize_header, FLAG_MAC_PRESENT, FLAG_RAW_BINARY, MAX_PAYLOAD_SIZE};
-use veyron_wire::mac::{compute_tag, verify_tag};
-use veyron_wire::proto::veyron::{envelope, Envelope};
+use vynkor_wire::framing::{serialize_header, FLAG_MAC_PRESENT, FLAG_RAW_BINARY, MAX_PAYLOAD_SIZE};
+use vynkor_wire::mac::{compute_tag, verify_tag};
+use vynkor_wire::proto::vynkor::{envelope, Envelope};
 
 use crate::error::AgentError;
 
-pub use veyron_wire::framing::Frame;
+pub use vynkor_wire::framing::Frame;
 
 pub const MAGIC: u16 = 0x5652;
 pub const HEADER_SIZE: usize = 44;
@@ -49,13 +49,13 @@ pub fn frame_to_bytes(frame: &Frame) -> Vec<u8> {
 /// crc/MAC verification is the caller's job (`verify_inbound`).
 pub fn parse_frame(bytes: &[u8]) -> Result<Frame, AgentError> {
     if bytes.len() < HEADER_SIZE {
-        return Err(AgentError::Wire(veyron_wire::WireError::Internal(
+        return Err(AgentError::Wire(vynkor_wire::WireError::Internal(
             "frame shorter than header".into(),
         )));
     }
     let magic = u16::from_be_bytes([bytes[0], bytes[1]]);
     if magic != MAGIC {
-        return Err(AgentError::Wire(veyron_wire::WireError::FrameMagicMismatch));
+        return Err(AgentError::Wire(vynkor_wire::WireError::FrameMagicMismatch));
     }
     let flags = u16::from_be_bytes([bytes[2], bytes[3]]);
     let length = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
@@ -65,14 +65,14 @@ pub fn parse_frame(bytes: &[u8]) -> Result<Frame, AgentError> {
 
     let mac = if flags & FLAG_MAC_PRESENT != 0 {
         if bytes.len() < HEADER_SIZE + MAC_TAG_LEN {
-            return Err(AgentError::Wire(veyron_wire::WireError::Internal(
+            return Err(AgentError::Wire(vynkor_wire::WireError::Internal(
                 "mac'd frame shorter than header+tag".into(),
             )));
         }
         let mut tag = [0u8; MAC_TAG_LEN];
         let end = HEADER_SIZE + length as usize;
         if end + MAC_TAG_LEN > bytes.len() {
-            return Err(AgentError::Wire(veyron_wire::WireError::Internal(
+            return Err(AgentError::Wire(vynkor_wire::WireError::Internal(
                 "mac'd frame payload overruns message".into(),
             )));
         }
@@ -84,7 +84,7 @@ pub fn parse_frame(bytes: &[u8]) -> Result<Frame, AgentError> {
 
     let end = HEADER_SIZE + length as usize;
     if end > bytes.len() {
-        return Err(AgentError::Wire(veyron_wire::WireError::Internal(
+        return Err(AgentError::Wire(vynkor_wire::WireError::Internal(
             "frame payload overruns message".into(),
         )));
     }
@@ -105,22 +105,22 @@ pub fn parse_frame(bytes: &[u8]) -> Result<Frame, AgentError> {
 pub fn verify_inbound(frame: &mut Frame, key: Option<&[u8; 32]>) -> Result<(), AgentError> {
     let computed_crc = crc32fast::hash(&frame.payload);
     if computed_crc != frame.crc32 {
-        return Err(AgentError::Wire(veyron_wire::WireError::FrameCrcMismatch));
+        return Err(AgentError::Wire(vynkor_wire::WireError::FrameCrcMismatch));
     }
     if frame.flags & FLAG_MAC_PRESENT != 0 {
         let key = key.ok_or_else(|| {
-            AgentError::Wire(veyron_wire::WireError::Internal(
+            AgentError::Wire(vynkor_wire::WireError::Internal(
                 "mac'd frame before session key armed".into(),
             ))
         })?;
         let header = serialize_header(frame);
         let tag = frame.mac.ok_or_else(|| {
-            AgentError::Wire(veyron_wire::WireError::Internal(
+            AgentError::Wire(vynkor_wire::WireError::Internal(
                 "mac flag set without tag".into(),
             ))
         })?;
         if !verify_tag(key, &header, &frame.payload, &tag) {
-            return Err(AgentError::Wire(veyron_wire::WireError::Internal(
+            return Err(AgentError::Wire(vynkor_wire::WireError::Internal(
                 "frame mac invalid".into(),
             )));
         }
@@ -176,7 +176,7 @@ pub fn target_str(frame: &Frame) -> String {
 /// guard of its own beyond the gateway's own limit).
 pub fn check_payload_size(payload: &[u8]) -> Result<(), AgentError> {
     if payload.len() > MAX_PAYLOAD_SIZE {
-        return Err(AgentError::Wire(veyron_wire::WireError::PayloadTooLarge(
+        return Err(AgentError::Wire(vynkor_wire::WireError::PayloadTooLarge(
             payload.len(),
         )));
     }
@@ -209,7 +209,7 @@ mod tests {
         bytes[1] = 0x01;
         assert!(matches!(
             parse_frame(&bytes),
-            Err(AgentError::Wire(veyron_wire::WireError::FrameMagicMismatch))
+            Err(AgentError::Wire(vynkor_wire::WireError::FrameMagicMismatch))
         ));
     }
 
@@ -266,7 +266,7 @@ mod tests {
     fn kernel_routed_classifies_envelopes() {
         let action = Envelope {
             payload: Some(envelope::Payload::ActionRequest(
-                veyron_wire::proto::veyron::ActionRequest::default(),
+                vynkor_wire::proto::vynkor::ActionRequest::default(),
             )),
             ..Default::default()
         };
@@ -276,7 +276,7 @@ mod tests {
         assert!(is_kernel_routed(&frame));
 
         let ping = Envelope {
-            payload: Some(envelope::Payload::Ping(veyron_wire::proto::veyron::Ping {
+            payload: Some(envelope::Payload::Ping(vynkor_wire::proto::vynkor::Ping {
                 timestamp: 1,
             })),
             ..Default::default()

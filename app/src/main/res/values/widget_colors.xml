@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Widget palette, light variant (values-night overrides). -->
+    <color name="widget_surface">#F3EDF7</color>
+    <color name="widget_text_primary">#1D1B20</color>
+    <color name="widget_text_secondary">#49454F</color>
+    <color name="widget_btn_bg">#E8DEF8</color>
+    <color name="widget_btn_text">#1D192B</color>
+    <color name="widget_btn_stop_text">#B3261E</color>
+</resources>

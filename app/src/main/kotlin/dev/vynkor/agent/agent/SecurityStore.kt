@@ -31,7 +31,9 @@ object SecurityStore {
     fun get(context: Context): Settings {
         val p = prefs(context)
         return Settings(
-            enabled = p.getBoolean(KEY_ENABLED, true),
+            // Off by default: locking is an opt-in from Settings -> Security.
+            // First-run users must not hit a biometric wall before pairing.
+            enabled = p.getBoolean(KEY_ENABLED, false),
             relockMinutes = p.getInt(KEY_RELOCK_MIN, DEFAULT_RELOCK_MINUTES),
             pinHash = p.getString(KEY_PIN_HASH, null),
             pinSalt = p.getString(KEY_PIN_SALT, null),

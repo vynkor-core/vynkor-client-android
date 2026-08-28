@@ -14,14 +14,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message;
 use tokio::sync::{mpsc, watch};
-use veyron_wire::framing::FLAG_RAW_BINARY;
-use veyron_wire::proto::veyron::{envelope, ActionRequest, ActionStatus, Envelope};
+use vynkor_wire::framing::FLAG_RAW_BINARY;
+use vynkor_wire::proto::vynkor::{envelope, ActionRequest, ActionStatus, Envelope};
 
 use crate::caps;
 use crate::error::AgentError;
 use crate::ffi::{
-    ActionReply, ActionReplyStatus, AgentConfig, AgentObserver, BatteryProvider, ClipboardProvider,
-    ConnectionStatus, ContactsProvider, Location, LocationProvider, SpeakerSink,
+    ActionReply, ActionReplyStatus, AgentConfig, AgentObserver, BatteryProvider,
+    BluetoothProvider, BrightnessProvider, CalendarProvider, CallsProvider, ClipboardProvider,
+    ConnectionStatus, ContactsProvider, DeviceInfoProvider, DndProvider, FlashlightProvider,
+    LauncherProvider, Location, LocationProvider, RingerProvider, SmsProvider, SpeakerSink,
+    WifiProvider,
 };
 use crate::protocol::{build_frame, check_payload_size, is_kernel_routed, target_str, Frame};
 use crate::transport::{CapConn, RegisterParams, BACKOFF_INITIAL, BACKOFF_MAX};
@@ -86,6 +89,17 @@ pub struct Agent {
     clipboard: Mutex<Option<Arc<dyn ClipboardProvider>>>,
     contacts: Mutex<Option<Arc<dyn ContactsProvider>>>,
     speaker: Mutex<Option<Arc<dyn SpeakerSink>>>,
+    device_info: Mutex<Option<Arc<dyn DeviceInfoProvider>>>,
+    wifi: Mutex<Option<Arc<dyn WifiProvider>>>,
+    bluetooth: Mutex<Option<Arc<dyn BluetoothProvider>>>,
+    dnd: Mutex<Option<Arc<dyn DndProvider>>>,
+    ringer: Mutex<Option<Arc<dyn RingerProvider>>>,
+    brightness: Mutex<Option<Arc<dyn BrightnessProvider>>>,
+    flashlight: Mutex<Option<Arc<dyn FlashlightProvider>>>,
+    launcher: Mutex<Option<Arc<dyn LauncherProvider>>>,
+    sms: Mutex<Option<Arc<dyn SmsProvider>>>,
+    calls: Mutex<Option<Arc<dyn CallsProvider>>>,
+    calendar: Mutex<Option<Arc<dyn CalendarProvider>>>,
     /// live outbound channels per capability, for the push paths
     caps: Mutex<HashMap<String, mpsc::Sender<Outbound>>>,
     live: AtomicUsize,
@@ -115,6 +129,17 @@ impl Agent {
             clipboard: Mutex::new(None),
             contacts: Mutex::new(None),
             speaker: Mutex::new(None),
+            device_info: Mutex::new(None),
+            wifi: Mutex::new(None),
+            bluetooth: Mutex::new(None),
+            dnd: Mutex::new(None),
+            ringer: Mutex::new(None),
+            brightness: Mutex::new(None),
+            flashlight: Mutex::new(None),
+            launcher: Mutex::new(None),
+            sms: Mutex::new(None),
+            calls: Mutex::new(None),
+            calendar: Mutex::new(None),
             caps: Mutex::new(HashMap::new()),
             live: AtomicUsize::new(0),
             pending: Mutex::new(HashMap::new()),
@@ -200,6 +225,50 @@ impl Agent {
 
     pub fn set_speaker(&self, p: Arc<dyn SpeakerSink>) {
         *lock(&self.speaker) = Some(p);
+    }
+
+    pub fn set_device_info(&self, p: Arc<dyn DeviceInfoProvider>) {
+        *lock(&self.device_info) = Some(p);
+    }
+
+    pub fn set_wifi(&self, p: Arc<dyn WifiProvider>) {
+        *lock(&self.wifi) = Some(p);
+    }
+
+    pub fn set_bluetooth(&self, p: Arc<dyn BluetoothProvider>) {
+        *lock(&self.bluetooth) = Some(p);
+    }
+
+    pub fn set_dnd(&self, p: Arc<dyn DndProvider>) {
+        *lock(&self.dnd) = Some(p);
+    }
+
+    pub fn set_ringer(&self, p: Arc<dyn RingerProvider>) {
+        *lock(&self.ringer) = Some(p);
+    }
+
+    pub fn set_brightness(&self, p: Arc<dyn BrightnessProvider>) {
+        *lock(&self.brightness) = Some(p);
+    }
+
+    pub fn set_flashlight(&self, p: Arc<dyn FlashlightProvider>) {
+        *lock(&self.flashlight) = Some(p);
+    }
+
+    pub fn set_launcher(&self, p: Arc<dyn LauncherProvider>) {
+        *lock(&self.launcher) = Some(p);
+    }
+
+    pub fn set_sms(&self, p: Arc<dyn SmsProvider>) {
+        *lock(&self.sms) = Some(p);
+    }
+
+    pub fn set_calls(&self, p: Arc<dyn CallsProvider>) {
+        *lock(&self.calls) = Some(p);
+    }
+
+    pub fn set_calendar(&self, p: Arc<dyn CalendarProvider>) {
+        *lock(&self.calendar) = Some(p);
     }
 
     pub fn set_observer(&self, o: Arc<dyn AgentObserver>) {
@@ -311,9 +380,9 @@ impl Agent {
             tracing::warn!("mic: no live connection, dropping {} bytes", pcm.len());
             return;
         };
-        let chunk = veyron_wire::proto::veyron::AudioStreamChunk {
+        let chunk = vynkor_wire::proto::vynkor::AudioStreamChunk {
             stream_id: 0,
-            codec: veyron_wire::proto::veyron::AudioCodec::PcmS16le as i32,
+            codec: vynkor_wire::proto::vynkor::AudioCodec::PcmS16le as i32,
             sample_rate: 16_000,
             channels: 1,
             data: pcm,
@@ -334,7 +403,7 @@ impl Agent {
             return;
         };
         let payload = serde_json::json!({ "app": app, "title": title, "body": body });
-        let ev = veyron_wire::proto::veyron::EventPublish {
+        let ev = vynkor_wire::proto::vynkor::EventPublish {
             event_type: "notification".into(),
             payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
         };
@@ -352,7 +421,7 @@ impl Agent {
             return;
         };
         let payload = serde_json::json!({ "text": text });
-        let ev = veyron_wire::proto::veyron::EventPublish {
+        let ev = vynkor_wire::proto::vynkor::EventPublish {
             event_type: "clipboard_changed".into(),
             payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
         };
@@ -375,7 +444,7 @@ impl Agent {
             "level_percent": level_percent,
             "charging": charging,
         });
-        let ev = veyron_wire::proto::veyron::EventPublish {
+        let ev = vynkor_wire::proto::vynkor::EventPublish {
             event_type: "battery_status".into(),
             payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
         };
@@ -397,7 +466,7 @@ impl Agent {
             "lon": loc.lon,
             "accuracy_m": loc.accuracy_m,
         });
-        let ev = veyron_wire::proto::veyron::EventPublish {
+        let ev = vynkor_wire::proto::vynkor::EventPublish {
             event_type: "geo_update".into(),
             payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
         };
@@ -535,6 +604,50 @@ impl Agent {
         lock(&self.speaker).clone()
     }
 
+    pub(crate) fn device_info_provider(&self) -> Option<Arc<dyn DeviceInfoProvider>> {
+        lock(&self.device_info).clone()
+    }
+
+    pub(crate) fn wifi_provider(&self) -> Option<Arc<dyn WifiProvider>> {
+        lock(&self.wifi).clone()
+    }
+
+    pub(crate) fn bluetooth_provider(&self) -> Option<Arc<dyn BluetoothProvider>> {
+        lock(&self.bluetooth).clone()
+    }
+
+    pub(crate) fn dnd_provider(&self) -> Option<Arc<dyn DndProvider>> {
+        lock(&self.dnd).clone()
+    }
+
+    pub(crate) fn ringer_provider(&self) -> Option<Arc<dyn RingerProvider>> {
+        lock(&self.ringer).clone()
+    }
+
+    pub(crate) fn brightness_provider(&self) -> Option<Arc<dyn BrightnessProvider>> {
+        lock(&self.brightness).clone()
+    }
+
+    pub(crate) fn flashlight_provider(&self) -> Option<Arc<dyn FlashlightProvider>> {
+        lock(&self.flashlight).clone()
+    }
+
+    pub(crate) fn launcher_provider(&self) -> Option<Arc<dyn LauncherProvider>> {
+        lock(&self.launcher).clone()
+    }
+
+    pub(crate) fn sms_provider(&self) -> Option<Arc<dyn SmsProvider>> {
+        lock(&self.sms).clone()
+    }
+
+    pub(crate) fn calls_provider(&self) -> Option<Arc<dyn CallsProvider>> {
+        lock(&self.calls).clone()
+    }
+
+    pub(crate) fn calendar_provider(&self) -> Option<Arc<dyn CalendarProvider>> {
+        lock(&self.calendar).clone()
+    }
+
     // ---- inbound dispatch ----
 
     /// Handle one host→device frame on a capability connection. Provider
@@ -561,7 +674,7 @@ impl Agent {
         };
         match env.payload {
             Some(envelope::Payload::Ping(p)) => {
-                let pong = veyron_wire::proto::veyron::Pong {
+                let pong = vynkor_wire::proto::vynkor::Pong {
                     original_timestamp: p.timestamp,
                     ..Default::default()
                 };
@@ -813,7 +926,7 @@ fn spawn_ping_task(out_tx: mpsc::Sender<Outbound>) -> tokio::task::JoinHandle<()
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
             let env = Envelope {
-                payload: Some(envelope::Payload::Ping(veyron_wire::proto::veyron::Ping {
+                payload: Some(envelope::Payload::Ping(vynkor_wire::proto::vynkor::Ping {
                     timestamp: ts,
                 })),
                 ..Default::default()
@@ -836,8 +949,8 @@ fn spawn_ping_task(out_tx: mpsc::Sender<Outbound>) -> tokio::task::JoinHandle<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use veyron_wire::framing::MAX_PAYLOAD_SIZE;
-    use veyron_wire::proto::veyron::ActionStatus as Status;
+    use vynkor_wire::framing::MAX_PAYLOAD_SIZE;
+    use vynkor_wire::proto::vynkor::ActionStatus as Status;
 
     fn test_config() -> AgentConfig {
         AgentConfig {

@@ -38,4 +38,22 @@
     <color name="disconnected">#9E9E9E</color>
     <color name="connecting">#F57C00</color>
     <color name="unreachable">#D32F2F</color>
+
+    <!-- Accent palettes (Appearance -> Accent). Containers have night
+         variants in values-night/accent_colors.xml. -->
+<color name="acc_green_primary">#2E7D32</color>
+<color name="acc_green_container">#C8E6C9</color>
+<color name="acc_green_on_container">#0B2E10</color>
+
+<color name="acc_purple_primary">#7C4DFF</color>
+<color name="acc_purple_container">#E3D8FF</color>
+<color name="acc_purple_on_container">#24105A</color>
+
+<color name="acc_orange_primary">#EF6C00</color>
+<color name="acc_orange_container">#FFE0B2</color>
+<color name="acc_orange_on_container">#4A2500</color>
+
+<color name="acc_rose_primary">#D81B60</color>
+<color name="acc_rose_container">#FFD1E0</color>
+<color name="acc_rose_on_container">#4A0A20</color>
 </resources>

@@ -1,6 +1,6 @@
 //! vynkor agent-core error type.
 
-use veyron_wire::WireError;
+use vynkor_wire::WireError;
 
 /// Agent failures: transport, wire, registration, and shutdown.
 #[derive(Debug, thiserror::Error)]

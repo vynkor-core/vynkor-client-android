@@ -27,4 +27,38 @@
         <item name="colorErrorContainer">@color/error_container</item>
         <item name="colorOnErrorContainer">@color/on_error_container</item>
     </style>
+
+    <!-- Accent overlays (Appearance -> Accent); only primary/secondary and
+         their containers change, surfaces stay put. -->
+    <style name="Theme.Vynkor.AccentGreen">
+        <item name="colorPrimary">@color/acc_green_primary</item>
+        <item name="colorSecondary">@color/acc_green_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_green_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_green_on_container</item>
+    </style>
+
+    <style name="Theme.Vynkor.AccentPurple">
+        <item name="colorPrimary">@color/acc_purple_primary</item>
+        <item name="colorSecondary">@color/acc_purple_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_purple_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_purple_on_container</item>
+    </style>
+
+    <style name="Theme.Vynkor.AccentOrange">
+        <item name="colorPrimary">@color/acc_orange_primary</item>
+        <item name="colorSecondary">@color/acc_orange_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_orange_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_orange_on_container</item>
+    </style>
+
+    <style name="Theme.Vynkor.AccentRose">
+        <item name="colorPrimary">@color/acc_rose_primary</item>
+        <item name="colorSecondary">@color/acc_rose_primary</item>
+        <item name="colorPrimaryContainer">@color/acc_rose_container</item>
+        <item name="colorOnPrimaryContainer">@color/acc_rose_on_container</item>
+    </style>
+    <style name="ShapeAppearance.Vynkor.Pill" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">22dp</item>
+    </style>
 </resources>

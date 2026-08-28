@@ -13,6 +13,30 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Extended device-control capabilities. Sensitive reads (SMS, call log,
+         calendar, nearby devices) are declared but only requested on demand
+         from the capabilities-permissions screen — never at service start. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <uses-permission
+        android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Package visibility (API 30+): list/launch other apps' launcher
+         activities for device.launcher. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
@@ -22,7 +46,17 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:networkSecurityConfig="@xml/network_security_config"
-        tools:targetApi="35">
+        tools:targetApi="35"
+        android:localeConfig="@xml/locales_config">
+
+
+        <activity
+            android:name=".SetupActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ProjectChatsActivity"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"
@@ -71,6 +105,22 @@
             android:exported="false" />
 
         <activity
+            android:name=".CapPermissionsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ProjectFilesActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".ChatSettingsActivity"
+            android:exported="false" />
+
+        <activity
+            android:name=".AboutActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".SecurityActivity"
             android:exported="false" />
 
@@ -89,6 +139,51 @@
             android:name=".agent.AgentService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <!-- Attachment sharing: ACTION_VIEW over app-private files. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- One-tap agent toggle from the quick settings panel (IDEAS #1). -->
+        <service
+            android:name=".AgentTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_stat_vynkor"
+            android:label="@string/tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Home-screen status widget (IDEAS #17): state + start/stop. -->
+        <receiver
+            android:name=".AgentStatusWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/agent_status_widget_info" />
+        </receiver>
+
+        <!-- Persists the per-app locale chosen in Settings on API < 33. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoreLocales"
+                android:value="true" />
+        </service>
 
         <service
             android:name=".notifications.NotificationListener"

@@ -10,6 +10,7 @@ data class ChatMessage(
     // collides on duplicate messages. Last + defaulted so positional
     // constructors keep compiling.
     val id: String = UUID.randomUUID().toString(),
+    val attachments: List<Attachment> = emptyList(),
 )
 
 // №36: fully immutable — updates go through copy(), so the store's cached

@@ -18,6 +18,10 @@ import javax.crypto.spec.SecretKeySpec
  * data) is AES-256-GCM encrypted under a PBKDF2WithHmacSHA256 key derived
  * from the user's password — the file is safe to store anywhere, and the
  * restore works on another device without any Keystore dependency.
+ *
+ * Metadata only: attachment and project-file bytes stay on this device
+ * (they live under filesDir and are deliberately not exported — a backup
+ * stays small; restored chats reference files that may not exist there).
  */
 object ChatBackup {
     private const val FORMAT = "vynkor-backup"

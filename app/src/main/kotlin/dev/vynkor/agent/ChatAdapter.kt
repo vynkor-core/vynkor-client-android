@@ -1,16 +1,23 @@
 package dev.vynkor.agent
 
 import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import android.view.View
 import android.widget.FrameLayout
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.Gravity
 import android.content.res.ColorStateList
+import dev.vynkor.agent.agent.AttachmentStore
 import dev.vynkor.agent.agent.ChatMessage
 import dev.vynkor.agent.databinding.ItemMessageBinding
 import io.noties.markwon.Markwon
@@ -36,7 +43,11 @@ class ChatAdapter(
     private val onMore: (ChatMessage, View) -> Unit,
     private val onSpeak: (ChatMessage) -> Unit,
     private val onTypingTap: (() -> Unit)? = null,
+    private val onAttachmentTap: ((String, dev.vynkor.agent.agent.Attachment) -> Unit)? = null,
 ) : ListAdapter<ChatMessage, ChatAdapter.Holder>(DIFF) {
+
+    /** Chat id owning the current list; used to resolve attachment paths. */
+    var chatId: String = ""
 
     private var speaking: ChatMessage? = null
 
@@ -125,11 +136,12 @@ class ChatAdapter(
 
         fun bind(message: ChatMessage, isSpeaking: Boolean) {
             val lp = binding.bubble.layoutParams as FrameLayout.LayoutParams
+            renderAttachments(message)
             when (message.role) {
                 "user" -> {
                     lp.gravity = Gravity.END
                     binding.bubble.setBackgroundResource(R.drawable.bubble_user)
-                    markwon().setMarkdown(binding.messageText, message.content)
+                    markwon().setMarkdown(binding.messageText, withCopyMarkers(message.content))
                     binding.messageText.setTextColor(color(R.color.on_primary))
                     binding.footerRow.visibility = View.GONE
                     itemView.setOnClickListener(null)
@@ -154,7 +166,14 @@ class ChatAdapter(
                     binding.messageText.setTextColor(color(R.color.on_surface))
                     binding.footerRow.visibility = View.VISIBLE
                     val tint = color(R.color.on_surface_variant)
-                    val activeTint = if (isSpeaking) color(R.color.primary) else tint
+                    val activeTint = if (isSpeaking) {
+                        com.google.android.material.color.MaterialColors.getColor(
+                            itemView,
+                            com.google.android.material.R.attr.colorPrimary,
+                        )
+                    } else {
+                        tint
+                    }
                     listOf(
                         binding.copyAction,
                         binding.moreAction,
@@ -184,11 +203,119 @@ class ChatAdapter(
                 // Partial reveal renders plain flowing text; markdown lands once.
                 binding.messageText.text = message.content.take(revealed)
             } else {
-                markwon().setMarkdown(binding.messageText, message.content)
+                markwon().setMarkdown(binding.messageText, withCopyMarkers(message.content))
             }
             itemView.setOnClickListener(
                 if (message.id == typingId) View.OnClickListener { onTypingTap?.invoke() }
                 else null,
+            )
+        }
+
+        private fun renderAttachments(message: ChatMessage) {
+            val row = binding.attachmentsRow
+            row.removeAllViews()
+            val attachments = message.attachments
+            relayoutForAttachments(attachments.isNotEmpty())
+            if (attachments.isEmpty()) {
+                row.visibility = View.GONE
+                return
+            }
+            row.visibility = View.VISIBLE
+            val density = ctx.resources.displayMetrics.density
+            attachments.forEach { attachment ->
+                val card = com.google.android.material.card.MaterialCardView(ctx).apply {
+                    layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+                        bottomMargin = (6 * density).toInt()
+                    }
+                    radius = 12 * density
+                    strokeWidth = 0
+                    cardElevation = 0f
+                    setCardBackgroundColor(
+                        if (message.role == "user") 0x33FFFFFF else {
+                            ContextCompat.getColor(ctx, R.color.surface_variant)
+                        },
+                    )
+                    isClickable = true
+                    isFocusable = true
+                    setOnClickListener { onAttachmentTap?.invoke(chatId, attachment) }
+                }
+                if (attachment.isImage) {
+                    card.addView(ImageView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams((220 * density).toInt(), (150 * density).toInt())
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        contentDescription = ctx.getString(R.string.attachment_image_desc, attachment.name)
+                        clipToOutline = true
+                        decodeThumb(chatId, attachment)?.let { bitmap ->
+                            setImageBitmap(bitmap)
+                        } ?: setImageResource(R.drawable.ic_file)
+                    })
+                } else {
+                    val line = LinearLayout(ctx).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(10 * density.toInt(), 8 * density.toInt(), 10 * density.toInt(), 8 * density.toInt())
+                    }
+                    line.addView(ImageView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams((22 * density).toInt(), (22 * density).toInt())
+                        setImageResource(R.drawable.ic_file)
+                        imageTintList = ColorStateList.valueOf(
+                            ContextCompat.getColor(
+                                ctx,
+                                if (message.role == "user") R.color.on_primary else R.color.on_surface,
+                            ),
+                        )
+                    })
+                    line.addView(TextView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+                            marginStart = 8 * density.toInt()
+                        }
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+                        maxWidth = (200 * density).toInt()
+                        text = "${attachment.name} · ${attachment.humanSize()}" +
+                            if (attachment.isVideo) " · ${ctx.getString(R.string.attachment_video_badge)}" else ""
+                        setTextColor(
+                            ContextCompat.getColor(
+                                ctx,
+                                if (message.role == "user") R.color.on_primary else R.color.on_surface,
+                            ),
+                        )
+                    })
+                    card.addView(line)
+                }
+                row.addView(card)
+            }
+            binding.messageText.visibility =
+                if (message.content.isBlank() && message.role == "user") View.GONE else View.VISIBLE
+        }
+
+        private fun relayoutForAttachments(hasAttachments: Boolean) {
+            val lp = binding.messageText.layoutParams as ConstraintLayout.LayoutParams
+            if (hasAttachments) {
+                lp.topToTop = ConstraintLayout.LayoutParams.UNSET
+                lp.topToBottom = binding.attachmentsRow.id
+            } else {
+                lp.topToBottom = ConstraintLayout.LayoutParams.UNSET
+                lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+            }
+            binding.messageText.layoutParams = lp
+        }
+
+        private fun decodeThumb(
+            chatId: String,
+            attachment: dev.vynkor.agent.agent.Attachment,
+        ): android.graphics.Bitmap? {
+            val path = AttachmentStore.fileFor(ctx, chatId, attachment).absolutePath
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= 440 || bounds.outHeight / (sample * 2) >= 300) {
+                sample *= 2
+            }
+            return BitmapFactory.decodeFile(
+                path,
+                BitmapFactory.Options().apply { inSampleSize = sample },
             )
         }
 
@@ -200,6 +327,50 @@ class ChatAdapter(
     companion object {
         private const val TYPING_PAYLOAD = "typing"
 
+        /**
+         * Fenced code blocks get a tiny "[⧉](vynkor-copy://N)" line right
+         * after the closing fence; the custom link resolver turns a tap on
+         * it into "copy block to clipboard". Blocks are stashed in
+         * [pendingCodeBlocks] at transform time and consumed on click.
+         */
+        private val pendingCodeBlocks = java.util.concurrent.ConcurrentHashMap<Int, String>()
+        private val codeBlockCounter = java.util.concurrent.atomic.AtomicInteger()
+
+        /** Appends a copy-marker link after every fenced block. */
+        internal fun withCopyMarkers(markdown: String): String {
+            val rx = java.util.regex.Pattern.compile("```[^\n]*\n(.*?)```", java.util.regex.Pattern.DOTALL)
+            val m = rx.matcher(markdown)
+            if (!m.find()) return markdown
+            val sb = java.lang.StringBuilder()
+            var pos = 0
+            m.reset()
+            while (m.find()) {
+                val idx = codeBlockCounter.incrementAndGet()
+                pendingCodeBlocks[idx] = m.group(1).orEmpty()
+                m.appendReplacement(
+                    sb,
+                    java.util.regex.Matcher.quoteReplacement(
+                        m.group() + "\n*⧉ [⧉](vynkor-copy://" + idx + ")*",
+                    ),
+                )
+            }
+            m.appendTail(sb)
+            return sb.toString()
+        }
+
+        private fun copyCode(view: android.view.View, link: String) {
+            val idx = link.removePrefix("vynkor-copy://").toIntOrNull() ?: return
+            val code = pendingCodeBlocks.remove(idx) ?: return
+            val cm = view.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("code", code))
+            android.widget.Toast.makeText(
+                view.context,
+                dev.vynkor.agent.R.string.copied,
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+
         private fun createMarkwon(ctx: android.content.Context): Markwon {
             val night = (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
@@ -210,6 +381,17 @@ class ChatAdapter(
                 .usePlugin(StrikethroughPlugin.create())
                 .usePlugin(LinkifyPlugin.create())
                 .usePlugin(SyntaxHighlightPlugin.create(Prism4j(ChatGrammarLocator()), prismTheme))
+                .usePlugin(object : io.noties.markwon.AbstractMarkwonPlugin() {
+                    override fun configureConfiguration(configuration: io.noties.markwon.MarkwonConfiguration.Builder) {
+                        configuration.linkResolver { view, link ->
+                            if (link.startsWith("vynkor-copy://")) {
+                                copyCode(view, link)
+                            } else {
+                                io.noties.markwon.LinkResolverDef().resolve(view, link)
+                            }
+                        }
+                    }
+                })
                 .build()
         }
 
@@ -220,7 +402,8 @@ class ChatAdapter(
             override fun areContentsTheSame(oldItem: ChatMessage, newItem: ChatMessage) =
                 oldItem.role == newItem.role &&
                     oldItem.content == newItem.content &&
-                    oldItem.timestamp == newItem.timestamp
+                    oldItem.timestamp == newItem.timestamp &&
+                    oldItem.attachments == newItem.attachments
         }
     }
 }
