@@ -1,7 +1,7 @@
 //! Per-capability dispatch: maps an inbound ActionRequest to the Kotlin
 //! provider behind that capability and builds the ActionResponse.
 
-use veyron_wire::proto::veyron::{envelope, ActionRequest, ActionResponse, ActionStatus, Envelope};
+use vynkor_wire::proto::vynkor::{envelope, ActionRequest, ActionResponse, ActionStatus, Envelope};
 
 use crate::agent::Agent;
 

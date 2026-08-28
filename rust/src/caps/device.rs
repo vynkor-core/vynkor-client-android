@@ -3,7 +3,7 @@
 //! calendar). Each handler maps one host→device ActionRequest onto a Kotlin
 //! provider trait and returns the JSON body for the ActionResponse.
 
-use veyron_wire::proto::veyron::ActionRequest;
+use vynkor_wire::proto::vynkor::ActionRequest;
 
 use crate::agent::Agent;
 
@@ -383,7 +383,7 @@ mod tests {
     };
     use crate::protocol::is_kernel_routed;
     use std::sync::Mutex;
-    use veyron_wire::proto::veyron::envelope;
+    use vynkor_wire::proto::vynkor::envelope;
 
     fn agent_with(register: impl FnOnce(&crate::agent::Agent)) -> crate::agent::Agent {
         let agent = crate::agent::Agent::new(crate::ffi::AgentConfig {
@@ -427,8 +427,8 @@ mod tests {
         }
     }
 
-    const OK: i32 = veyron_wire::proto::veyron::ActionStatus::ActionOk as i32;
-    const ERR: i32 = veyron_wire::proto::veyron::ActionStatus::ActionError as i32;
+    const OK: i32 = vynkor_wire::proto::vynkor::ActionStatus::ActionOk as i32;
+    const ERR: i32 = vynkor_wire::proto::vynkor::ActionStatus::ActionError as i32;
 
     #[test]
     fn clamp_limit_zero_and_over_ceiling_resolve_to_max() {

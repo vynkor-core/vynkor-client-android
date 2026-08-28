@@ -13,9 +13,9 @@ crate-type = ["cdylib", "lib"]
 # UniFFI bindings generator: proc-macro exports (`#[uniffi::export]`) +
 # `setup_scaffolding!()`. Kotlin bindings generated at build time.
 uniffi = { version = "0.32", features = ["cli"] }
-# 0.2.3 = proto v1.6: device identity (DeviceOs::Android), audio stream,
+# 0.0.3 = proto v1.6: device identity (DeviceOs::Android), audio stream,
 # tool schema. All framing/MAC/protobuf types come from here, verbatim.
-veyron-wire = "0.2"
+vynkor-wire = "0.0.3"
 # Message trait for Envelope encode/decode.
 prost = "0.13"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "io-util", "sync", "macros"] }
@@ -40,3 +40,6 @@ tracing-android = "0.2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[patch.crates-io]
+vynkor-wire = { path = "../../vynkor-wire" }

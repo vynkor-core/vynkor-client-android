@@ -2,7 +2,7 @@
 //! and the mic → host STT direction (push_mic_pcm on the Agent).
 
 use prost::Message;
-use veyron_wire::proto::veyron::{envelope, AudioCodec, Envelope};
+use vynkor_wire::proto::vynkor::{envelope, AudioCodec, Envelope};
 
 use crate::agent::Agent;
 

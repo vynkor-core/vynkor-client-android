@@ -80,25 +80,25 @@ lifecycle-runtime-ktx, kotlinx-coroutines-android.
 Environment: host `192.168.1.157`, phone (MI 6, Android 13) on the same
 Wi-Fi, Ollama (`llama3.2:3b`) running locally on the host.
 
-1. **Kernel config** (`/tmp/veyron-e2e/config.yaml`): `jwt_secret` (≥32 bytes),
+1. **Kernel config** (`/tmp/vyn-e2e/config.yaml`): `jwt_secret` (≥32 bytes),
    `tls: false` (app can't verify self-signed over LAN), `bind: 0.0.0.0`,
    `port: 25565` (UFW-allowed), `plugins_dir` with `ai` + `network`.
 
-2. **`ai`/`network` plugins were STALE** — binaries pinned `veyron-wire 0.2.0`
+2. **`ai`/`network` plugins were STALE** — binaries pinned `vynkor-wire 0.2.0`
    / `0.2.2`, i.e. the pre-M9 `ActionStatus` numbering where `ACTION_OK == 0`.
    The kernel (proto v1.6) reads `0` as `ACTION_UNKNOWN`, so every
    `chat_completion` came back `status=0`. Fix: `cargo update` (→
-   `veyron-sdk 0.1.6`, `veyron-wire 0.2.3`) + rebuild + reinstall the
-   binaries. See the `veyron-plugins` PR that commits the lock bump.
+   `vynkor-sdk 0.1.6`, `vynkor-wire 0.2.3`) + rebuild + reinstall the
+   binaries. See the `vynkor-plugins` PR that commits the lock bump.
 
 3. **Auth for local plugins.** With `jwt_secret` set, *every* register must
    present a JWT — including the local UDS plugins, which read
-   `VEYRON_JWT_SECRET` + `VEYRON_JWT_TOKEN` from their env. So mint three
+   `VYN_JWT_SECRET` + `VYN_JWT_TOKEN` from their env. So mint three
    tokens and set the env:
    - device: `vyn token mint --device d14-test-phone --permissions "PERMISSION_IPC_SEND,PERMISSION_EVENT_PUBLISH,PERMISSION_AUDIO_STREAM" --ipc-targets kernel`
    - `ai`: `--device ai --permissions "PERMISSION_NETWORK"` (T-19: it calls `network`'s gated `http_request`)
    - `network`: `--device network --permissions "PERMISSION_NETWORK,PERMISSION_EVENT_PUBLISH"`
-   - plugin env: `VEYRON_JWT_SECRET=<secret>`, `VEYRON_JWT_TOKEN=<token>`,
+   - plugin env: `VYN_JWT_SECRET=<secret>`, `VYN_JWT_TOKEN=<token>`,
      `AI_PLUGIN_ALLOWED_KEY_ENVS=OLLAMA_API_KEY,…`, `OLLAMA_API_KEY=dummy`,
      `NETWORK_PLUGIN_ALLOWED_HOSTS=localhost,127.0.0.1`.
 
@@ -114,8 +114,8 @@ Wi-Fi, Ollama (`llama3.2:3b`) running locally on the host.
 ## Findings (beyond this repo)
 
 1. **`ai`/`network` binaries were built against the pre-M9 proto** (lock at
-   `veyron-wire 0.2.0`/`0.2.2`). Symptom: `status=0` (UNKNOWN) responses.
-   Fixed by the lock bump committed in `veyron-plugins`.
+   `vynkor-wire 0.2.0`/`0.2.2`). Symptom: `status=0` (UNKNOWN) responses.
+   Fixed by the lock bump committed in `vynkor-plugins`.
 2. **`ai` rejects an empty `api_key_env`** (`handler.rs`: `environment variable
    … is not set`), contradicting its README ("empty key is fine for Ollama").
    Worked around with `OLLAMA_API_KEY=dummy`; the plugin should either allow an
@@ -136,7 +136,7 @@ Wi-Fi, Ollama (`llama3.2:3b`) running locally on the host.
   id; provider/base_url/api_key_env no longer travel from the phone.
   Analytics: every completion records input/output tokens
   (`usage` table); `usage_stats` aggregates by model/agent. Requires a
-  kernel that grants `VEYRON_DATA_DIR` (veyron: supervisor `set_data_dir`).
+  kernel that grants `VYN_DATA_DIR` (vynkor: supervisor `set_data_dir`).
 - Voice pipeline (mic→STT→AI→TTS) — caps exist, pipeline missing.
 - TLS cert pinning (still `tls: false` for LAN tests).
 - `user_id` per profile (hardcoded `"default"`).

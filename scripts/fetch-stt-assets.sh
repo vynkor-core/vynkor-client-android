@@ -23,7 +23,7 @@ fi
 MODEL_DIR="app/src/main/assets/stt"
 if [ ! -f "$MODEL_DIR/encoder.onnx" ]; then
   mkdir -p "$MODEL_DIR"
-  SRC="../veyron-plugins/models/stt/zipformer-ru-int8"
+  SRC="../vynkor-plugins/models/stt/zipformer-ru-int8"
   if [ -d "$SRC" ]; then
     echo "Copying model from $SRC …"
     cp "$SRC"/encoder.onnx "$SRC"/decoder.onnx "$SRC"/joiner.onnx "$SRC"/tokens.txt "$MODEL_DIR"/

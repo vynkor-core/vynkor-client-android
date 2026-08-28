@@ -5,7 +5,7 @@
 > implemented; anything marked ⚠️ requires matching behavior on the host to be
 > useful end-to-end.
 >
-> Wire format: `veyron-wire` / proto v1.6 (`Envelope`, `ActionRequest`,
+> Wire format: `vynkor-wire` / proto v1.6 (`Envelope`, `ActionRequest`,
 > `ActionResponse`, `EventPublish`) over per-capability WebSocket sessions,
 > frame-MAC keyed off the per-device `device_secret` (pairing payload v2).
 >

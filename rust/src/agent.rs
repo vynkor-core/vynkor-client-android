@@ -14,8 +14,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message;
 use tokio::sync::{mpsc, watch};
-use veyron_wire::framing::FLAG_RAW_BINARY;
-use veyron_wire::proto::veyron::{envelope, ActionRequest, ActionStatus, Envelope};
+use vynkor_wire::framing::FLAG_RAW_BINARY;
+use vynkor_wire::proto::vynkor::{envelope, ActionRequest, ActionStatus, Envelope};
 
 use crate::caps;
 use crate::error::AgentError;
@@ -380,9 +380,9 @@ impl Agent {
             tracing::warn!("mic: no live connection, dropping {} bytes", pcm.len());
             return;
         };
-        let chunk = veyron_wire::proto::veyron::AudioStreamChunk {
+        let chunk = vynkor_wire::proto::vynkor::AudioStreamChunk {
             stream_id: 0,
-            codec: veyron_wire::proto::veyron::AudioCodec::PcmS16le as i32,
+            codec: vynkor_wire::proto::vynkor::AudioCodec::PcmS16le as i32,
             sample_rate: 16_000,
             channels: 1,
             data: pcm,
@@ -403,7 +403,7 @@ impl Agent {
             return;
         };
         let payload = serde_json::json!({ "app": app, "title": title, "body": body });
-        let ev = veyron_wire::proto::veyron::EventPublish {
+        let ev = vynkor_wire::proto::vynkor::EventPublish {
             event_type: "notification".into(),
             payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
         };
@@ -421,7 +421,7 @@ impl Agent {
             return;
         };
         let payload = serde_json::json!({ "text": text });
-        let ev = veyron_wire::proto::veyron::EventPublish {
+        let ev = vynkor_wire::proto::vynkor::EventPublish {
             event_type: "clipboard_changed".into(),
             payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
         };
@@ -444,7 +444,7 @@ impl Agent {
             "level_percent": level_percent,
             "charging": charging,
         });
-        let ev = veyron_wire::proto::veyron::EventPublish {
+        let ev = vynkor_wire::proto::vynkor::EventPublish {
             event_type: "battery_status".into(),
             payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
         };
@@ -466,7 +466,7 @@ impl Agent {
             "lon": loc.lon,
             "accuracy_m": loc.accuracy_m,
         });
-        let ev = veyron_wire::proto::veyron::EventPublish {
+        let ev = vynkor_wire::proto::vynkor::EventPublish {
             event_type: "geo_update".into(),
             payload_json: serde_json::to_vec(&payload).unwrap_or_default(),
         };
@@ -674,7 +674,7 @@ impl Agent {
         };
         match env.payload {
             Some(envelope::Payload::Ping(p)) => {
-                let pong = veyron_wire::proto::veyron::Pong {
+                let pong = vynkor_wire::proto::vynkor::Pong {
                     original_timestamp: p.timestamp,
                     ..Default::default()
                 };
@@ -926,7 +926,7 @@ fn spawn_ping_task(out_tx: mpsc::Sender<Outbound>) -> tokio::task::JoinHandle<()
                 .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
             let env = Envelope {
-                payload: Some(envelope::Payload::Ping(veyron_wire::proto::veyron::Ping {
+                payload: Some(envelope::Payload::Ping(vynkor_wire::proto::vynkor::Ping {
                     timestamp: ts,
                 })),
                 ..Default::default()
@@ -949,8 +949,8 @@ fn spawn_ping_task(out_tx: mpsc::Sender<Outbound>) -> tokio::task::JoinHandle<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use veyron_wire::framing::MAX_PAYLOAD_SIZE;
-    use veyron_wire::proto::veyron::ActionStatus as Status;
+    use vynkor_wire::framing::MAX_PAYLOAD_SIZE;
+    use vynkor_wire::proto::vynkor::ActionStatus as Status;
 
     fn test_config() -> AgentConfig {
         AgentConfig {

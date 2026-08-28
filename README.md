@@ -1,6 +1,6 @@
 # vynkor-client-android
 
-Android device-agent for the vynkor (formerly Veyron) plugin kernel: turns a
+Android device-agent for the vynkor (formerly Vynkor) plugin kernel: turns a
 phone into a remote device whose capabilities register on a host kernel as
 `{device_id}.{cap}` (D-14). Geo, battery, notifications, clipboard, contacts,
 mic and speaker are callable from the host over WebSocket.
@@ -20,7 +20,7 @@ app/    the Kotlin/Gradle Android app: foreground service, capability providers
 ```
 
 Rust = protocol, Kotlin = device I/O, UniFFI is the boundary. The core reuses
-`veyron-wire` 0.2.3 (proto v1.6) verbatim — no reimplemented crypto.
+`vynkor-wire` 0.2.3 (proto v1.6) verbatim — no reimplemented crypto.
 
 ## Build
 

@@ -15,9 +15,9 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
-use veyron_wire::mac::derive_session_key;
-use veyron_wire::proto::veyron::{envelope, DeviceOs, Envelope, PluginRegister, PluginRegisterAck};
-use veyron_wire::PROTOCOL_VERSION;
+use vynkor_wire::mac::derive_session_key;
+use vynkor_wire::proto::vynkor::{envelope, DeviceOs, Envelope, PluginRegister, PluginRegisterAck};
+use vynkor_wire::PROTOCOL_VERSION;
 
 use crate::error::AgentError;
 use crate::protocol::{build_frame, frame_to_bytes, parse_frame};
@@ -77,7 +77,7 @@ impl CapConn {
         // same handshake as the SDK/bridge: JWT rides the subprotocol header,
         // never the URL (access-log hygiene)
         // kernel validates the first entry != "vynkor" — sending the old
-        // "veyron" name made it treat that literal string as the token (401)
+        // "vynkor" name made it treat that literal string as the token (401)
         let protocol = if params.jwt_token.is_empty() {
             "vynkor".to_string()
         } else {
@@ -133,7 +133,7 @@ impl CapConn {
         };
         let mut payload = Vec::new();
         env.encode(&mut payload).map_err(|e| {
-            AgentError::Wire(veyron_wire::WireError::Internal(format!(
+            AgentError::Wire(vynkor_wire::WireError::Internal(format!(
                 "encode register: {e}"
             )))
         })?;
@@ -194,7 +194,7 @@ async fn await_ack(
             Ok(Some(Err(e))) => return Err(AgentError::from(e)),
         };
         let env = Envelope::decode(frame.payload.as_ref()).map_err(|e| {
-            AgentError::Wire(veyron_wire::WireError::Internal(format!(
+            AgentError::Wire(vynkor_wire::WireError::Internal(format!(
                 "decode register ack: {e}"
             )))
         })?;
