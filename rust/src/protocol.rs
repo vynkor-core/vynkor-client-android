@@ -163,6 +163,7 @@ pub fn is_kernel_routed(frame: &Frame) -> bool {
             | Some(envelope::Payload::KernelCommandAck(_))
             | Some(envelope::Payload::EventAck(_))
             | Some(envelope::Payload::PluginRegisterAck(_))
+            | Some(envelope::Payload::AudioStreamChunk(_))
     )
 }
 

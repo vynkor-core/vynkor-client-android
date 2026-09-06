@@ -1,9 +1,10 @@
-//! WS transport to the host kernel — one connection per capability.
+//! WS transport to the host kernel — one connection per device (multiplexed).
 //!
 //! Mirrors the D-06 bridge handshake: JWT in `Sec-WebSocket-Protocol`,
 //! register → ack → `derive_session_key` → `FLAG_MAC_PRESENT` on every
 //! subsequent frame. The connection splits into read/write halves so the
 //! inbound dispatch loop and the outbound push-path drain run concurrently.
+//! Single WS per device_id multiplexes all capabilities by target suffix.
 
 use std::time::Duration;
 
@@ -26,16 +27,16 @@ pub const BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 pub const BACKOFF_MAX: Duration = Duration::from_secs(30);
 
 /// R-06: a host that accepts the handshake but never acks the register must
-/// not wedge the cap loop forever on `ws.next()`.
+/// not wedge the loop forever on `ws.next()`.
 pub const REGISTER_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// Registration parameters for one capability.
+/// Registration parameters for the single device connection.
 #[derive(Debug, Clone)]
 pub struct RegisterParams {
     pub device_id: String,
-    pub cap: String,
+    pub caps: Vec<String>,
     pub jwt_token: String,
     /// per-device secret issued by the host (E-01); None = no MAC
     pub device_secret: Option<String>,
@@ -48,36 +49,39 @@ pub struct RegisterParams {
 }
 
 impl RegisterParams {
-    /// `<device_id>.<cap>` — the D-14 naming, globally unique per device.
     pub fn plugin_id(&self) -> String {
-        format!("{}.{}", self.device_id, self.cap)
+        self.device_id.clone()
+    }
+    pub fn caps(&self) -> &[String] {
+        &self.caps
     }
 }
 
-/// One live WS connection to the host, split after registration.
-pub struct CapConn {
+/// One live WS connection to the host, split after registration. Multiplexes
+/// all capabilities over a single socket with one session key derived from
+/// device_id.
+pub struct DeviceConn {
     read: SplitStream<WsStream>,
     write: SplitSink<WsStream, WsMessage>,
     session_key: Option<[u8; 32]>,
+    pub caps: Vec<String>,
 }
 
-impl CapConn {
-    /// Connect + register one capability. Returns only once the host acked.
+/// Backwards compat alias: old per-cap name now points to DeviceConn.
+pub type CapConn = DeviceConn;
+
+impl DeviceConn {
+    /// Connect + register the device with all capabilities at once. Returns
+    /// only once the host acked.
     pub async fn connect_and_register(
         host_url: &str,
         params: &RegisterParams,
     ) -> Result<Self, AgentError> {
         let url = resolve_ws_url(host_url)?;
-        // tungstenite 0.30 implements IntoClientRequest for &str/String, not
-        // url::Url — convert through the string form
         let mut req = url
             .as_str()
             .into_client_request()
             .map_err(|e| AgentError::Connect(e.to_string()))?;
-        // same handshake as the SDK/bridge: JWT rides the subprotocol header,
-        // never the URL (access-log hygiene)
-        // kernel validates the first entry != "vynkor" — sending the old
-        // "vynkor" name made it treat that literal string as the token (401)
         let protocol = if params.jwt_token.is_empty() {
             "vynkor".to_string()
         } else {
@@ -113,17 +117,22 @@ impl CapConn {
         };
 
         let plugin_id = params.plugin_id();
+        let caps = params.caps.clone();
         let reg = PluginRegister {
             plugin_id: plugin_id.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
-            description: format!("vynkor device-agent capability {}", params.cap),
+            description: format!(
+                "vynkor device-agent device {} caps {}",
+                plugin_id,
+                caps.join(",")
+            ),
             manifest: None,
             jwt_token: params.jwt_token.clone(),
             device_id: params.device_id.clone(),
             os: DeviceOs::Android as i32,
             arch: params.arch.clone(),
             os_version: params.os_version.clone(),
-            capabilities: vec![params.cap.clone()],
+            capabilities: caps.clone(),
             protocol_version: PROTOCOL_VERSION.to_string(),
             user_id: params.user_id.clone(),
         };
@@ -137,7 +146,6 @@ impl CapConn {
                 "encode register: {e}"
             )))
         })?;
-        // register frame is never mac'd (the key doesn't exist yet)
         let mut ws = ws;
         ws.send(WsMessage::Binary(
             frame_to_bytes(&build_frame("kernel", 0, payload)).into(),
@@ -148,15 +156,14 @@ impl CapConn {
         let session_key = await_ack(&mut ws, params, &plugin_id).await?;
 
         let (write, read) = ws.split();
-        Ok(CapConn {
+        Ok(DeviceConn {
             read,
             write,
             session_key,
+            caps,
         })
     }
 
-    /// Split into the stream halves for concurrent read/write loops. The
-    /// session key is Copy, so both halves can verify/arm.
     pub fn into_parts(
         self,
     ) -> (
@@ -172,7 +179,6 @@ impl CapConn {
     }
 }
 
-/// Read frames until the register ack; arm the session key from its nonce.
 async fn await_ack(
     ws: &mut WsStream,
     params: &RegisterParams,
@@ -209,7 +215,7 @@ async fn await_ack(
                 )));
             }
             _ => {
-                tracing::warn!(cap = %params.cap, "unexpected frame before register ack");
+                tracing::warn!(device_id = %params.device_id, caps = ?params.caps, "unexpected frame before register ack");
                 continue;
             }
         }
@@ -232,13 +238,10 @@ fn arm_from_ack(
         )),
         _ => None,
     };
-    tracing::info!(plugin_id = %plugin_id, "registered on host");
+    tracing::info!(plugin_id = %plugin_id, caps = ?params.caps, "registered on host");
     Ok(key)
 }
 
-/// Build a rustls client config that trusts only the pinned host cert (D-07
-/// "pin the exact served cert" rule for local clients, carried to the phone via
-/// the pairing QR). Parses one or more PEM certs into a root store.
 fn pinned_tls_config(pem: &str) -> Result<rustls::ClientConfig, AgentError> {
     let mut roots = rustls::RootCertStore::empty();
     let mut reader = std::io::Cursor::new(pem.as_bytes());
@@ -258,8 +261,6 @@ fn pinned_tls_config(pem: &str) -> Result<rustls::ClientConfig, AgentError> {
         .with_no_client_auth())
 }
 
-/// Map a configured host URL onto a ws(s) endpoint. `http(s)://` becomes
-/// `ws(s)://`; a bare origin gains the gateway's `/ws` path (D-06 rule).
 fn resolve_ws_url(raw: &str) -> Result<url::Url, AgentError> {
     let s = raw.trim();
     let prefixed = if s.starts_with("ws://") || s.starts_with("wss://") {
@@ -304,7 +305,6 @@ yb1Tnq5tizCER4XqSXqd5jIWj06Iijtt3Yo9WbD36qqOiBcU8cxD+LyRxnIGd+Dd
 
     #[test]
     fn pinned_tls_accepts_a_valid_cert_pem() {
-        // Building a connector must succeed with exactly one trusted root.
         let cfg = pinned_tls_config(TEST_CERT_PEM).unwrap();
         let _ = cfg;
     }
@@ -330,7 +330,6 @@ yb1Tnq5tizCER4XqSXqd5jIWj06Iijtt3Yo9WbD36qqOiBcU8cxD+LyRxnIGd+Dd
     #[test]
     fn resolve_https_becomes_wss() {
         let url = resolve_ws_url("https://host:443").unwrap();
-        // the url crate drops the default 443 port for wss
         assert_eq!(url.as_str(), "wss://host/ws");
     }
 
@@ -347,10 +346,10 @@ yb1Tnq5tizCER4XqSXqd5jIWj06Iijtt3Yo9WbD36qqOiBcU8cxD+LyRxnIGd+Dd
     }
 
     #[test]
-    fn register_params_plugin_id_uses_device_id() {
+    fn register_params_plugin_id_is_device_id() {
         let p = RegisterParams {
             device_id: "phone-abc".into(),
-            cap: "geo".into(),
+            caps: vec!["geo".into(), "battery".into()],
             jwt_token: String::new(),
             device_secret: None,
             cert_pem: None,
@@ -358,6 +357,23 @@ yb1Tnq5tizCER4XqSXqd5jIWj06Iijtt3Yo9WbD36qqOiBcU8cxD+LyRxnIGd+Dd
             arch: "aarch64".into(),
             user_id: "default".into(),
         };
-        assert_eq!(p.plugin_id(), "phone-abc.geo");
+        assert_eq!(p.plugin_id(), "phone-abc");
+        assert_eq!(p.caps, vec!["geo", "battery"]);
+    }
+
+    #[test]
+    fn device_conn_single_ws_carry_all_caps() {
+        let p = RegisterParams {
+            device_id: "dev-xxx".into(),
+            caps: vec!["battery".into(), "geo".into(), "clipboard".into()],
+            jwt_token: String::new(),
+            device_secret: None,
+            cert_pem: None,
+            os_version: "14".into(),
+            arch: "aarch64".into(),
+            user_id: "default".into(),
+        };
+        assert_eq!(p.caps.len(), 3);
+        assert_eq!(p.plugin_id(), "dev-xxx");
     }
 }

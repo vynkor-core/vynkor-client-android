@@ -34,6 +34,9 @@ tracing = "0.1"
 # routes them to logcat (adb logcat shows the agent's protocol logs).
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry", "fmt"] }
 thiserror = "2"
+opus = "0.3"
+rtrb = "0.3"
+ringbuf = "0.4"
 
 [target.'cfg(target_os = "android")'.dependencies]
 tracing-android = "0.2"
