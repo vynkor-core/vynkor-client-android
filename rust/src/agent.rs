@@ -1,12 +1,13 @@
 //! The `Agent` object — Kotlin's handle on the Rust core.
 //!
 //! Owns a dedicated tokio runtime on a background thread, one reconnect loop
-//! per capability (each a `CapConn` to the host), the capability-provider
-//! slots, and the Kotlin→Rust push paths. No Android APIs here — Kotlin
-//! implements the foreign traits (ffi.rs), Rust runs the protocol.
+//! for the single device connection (`DeviceConn` to the host) multiplexing all
+//! capabilities, the capability-provider slots, and the Kotlin→Rust push paths.
+//! No Android APIs here — Kotlin implements the foreign traits (ffi.rs), Rust
+//! runs the protocol.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, Sender as StdSender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -20,14 +21,14 @@ use vynkor_wire::proto::vynkor::{envelope, ActionRequest, ActionStatus, Envelope
 use crate::caps;
 use crate::error::AgentError;
 use crate::ffi::{
-    ActionReply, ActionReplyStatus, AgentConfig, AgentObserver, BatteryProvider,
-    BluetoothProvider, BrightnessProvider, CalendarProvider, CallsProvider, ClipboardProvider,
-    ConnectionStatus, ContactsProvider, DeviceInfoProvider, DndProvider, FlashlightProvider,
-    LauncherProvider, Location, LocationProvider, RingerProvider, SmsProvider, SpeakerSink,
-    WifiProvider,
+    ActionReply, ActionReplyStatus, AgentConfig, AgentObserver, BatteryProvider, BluetoothProvider,
+    BrightnessProvider, CalendarProvider, CallsProvider, ClipboardProvider, ConnectionStatus,
+    ContactsProvider, DeviceInfoProvider, DndProvider, FlashlightProvider, LauncherProvider,
+    Location, LocationProvider, RingerProvider, SmsProvider, SpeakerSink, WifiProvider,
 };
 use crate::protocol::{build_frame, check_payload_size, is_kernel_routed, target_str, Frame};
-use crate::transport::{CapConn, RegisterParams, BACKOFF_INITIAL, BACKOFF_MAX};
+use crate::transport::{DeviceConn, RegisterParams, BACKOFF_INITIAL, BACKOFF_MAX};
+use rtrb::{Consumer, Producer, RingBuffer};
 
 /// Capability that carries outbound request/response traffic (target "kernel",
 /// routed by action name). It has no host→device actions of its own.
@@ -111,6 +112,12 @@ pub struct Agent {
     /// oversized payload was rejected; logged and reset at session teardown
     dropped_outbound: AtomicU64,
     observer: Mutex<Option<Arc<dyn AgentObserver>>>,
+    pub(crate) speaker_ring_prod: Arc<Mutex<Producer<u8>>>,
+    pub(crate) speaker_ring_cons: Arc<Mutex<Consumer<u8>>>,
+    pub(crate) speaker_eos: Arc<AtomicBool>,
+    pub(crate) speaker_pending_bytes: Arc<AtomicUsize>,
+    pub(crate) speaker_sample_rate: Arc<AtomicU32>,
+    pub(crate) opus_decoders: Arc<Mutex<HashMap<u32, opus::Decoder>>>,
 }
 
 #[uniffi::export]
@@ -118,6 +125,7 @@ impl Agent {
     #[uniffi::constructor]
     pub fn new(config: AgentConfig) -> Self {
         init_tracing();
+        let (prod, cons) = RingBuffer::new(2_000_000);
         Self {
             config,
             state: Mutex::new(AgentState::Stopped),
@@ -146,6 +154,12 @@ impl Agent {
             action_seq: AtomicU64::new(0),
             dropped_outbound: AtomicU64::new(0),
             observer: Mutex::new(None),
+            speaker_ring_prod: Arc::new(Mutex::new(prod)),
+            speaker_ring_cons: Arc::new(Mutex::new(cons)),
+            speaker_eos: Arc::new(AtomicBool::new(false)),
+            speaker_pending_bytes: Arc::new(AtomicUsize::new(0)),
+            speaker_sample_rate: Arc::new(AtomicU32::new(24000)),
+            opus_decoders: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -479,10 +493,10 @@ impl Agent {
 }
 
 impl Agent {
-    fn register_params(&self, cap: &str) -> RegisterParams {
+    fn register_params(&self) -> RegisterParams {
         RegisterParams {
             device_id: self.config.device_id.clone(),
-            cap: cap.to_string(),
+            caps: self.config.capabilities.clone(),
             jwt_token: self.config.jwt_token.clone(),
             device_secret: (!self.config.device_secret.is_empty())
                 .then(|| self.config.device_secret.clone()),
@@ -494,10 +508,8 @@ impl Agent {
     }
 
     async fn run(self: Arc<Self>, mut stop_rx: watch::Receiver<bool>) {
-        for cap in self.config.capabilities.clone() {
-            spawn_cap_loop(Arc::clone(&self), cap, stop_rx.clone());
-        }
-        // keep the runtime alive until stop(); cap loops exit via the watch
+        let caps = self.config.capabilities.clone();
+        spawn_device_loop(Arc::clone(&self), caps, stop_rx.clone());
         while !*stop_rx.borrow() {
             if stop_rx.changed().await.is_err() {
                 break;
@@ -648,6 +660,106 @@ impl Agent {
         lock(&self.calendar).clone()
     }
 
+    pub(crate) fn speaker_push_pcm_internal(&self, pcm: Vec<u8>, sample_rate: u32, eos: bool) -> u64 {
+        let len = pcm.len() as u64;
+        if len == 0 && !eos {
+            return 0;
+        }
+        if sample_rate != 0 {
+            self.speaker_sample_rate
+                .store(sample_rate, Ordering::Relaxed);
+        }
+        if len > 0 {
+            let mut prod = self.speaker_ring_prod.lock().unwrap();
+            let mut pushed = 0usize;
+            for b in pcm {
+                if prod.push(b).is_ok() {
+                    pushed += 1;
+                } else {
+                    break;
+                }
+            }
+            self.speaker_pending_bytes
+                .fetch_add(pushed, Ordering::Relaxed);
+            if pushed as u64 != len {
+                tracing::warn!(pushed, total = len, "speaker ring full, dropping");
+            }
+        }
+        if eos {
+            self.speaker_eos.store(true, Ordering::Relaxed);
+        }
+        len
+    }
+
+    pub(crate) fn decode_opus_cached(
+        &self,
+        stream_id: u32,
+        data: &[u8],
+        sample_rate: u32,
+    ) -> Result<Vec<u8>, String> {
+        let sr = if sample_rate == 0 { 24000 } else { sample_rate };
+        let mut decoders = self.opus_decoders.lock().unwrap();
+        let need_new = match decoders.get(&stream_id) {
+            Some(_) => false,
+            None => true,
+        };
+        if need_new {
+            let dec = opus::Decoder::new(sr, opus::Channels::Mono)
+                .map_err(|e| format!("opus init: {e}"))?;
+            decoders.insert(stream_id, dec);
+        }
+        let dec = decoders.get_mut(&stream_id).unwrap();
+        if dec as *const _ as usize == 0 {
+            return Err("decoder missing".into());
+        }
+        let mut pcm = vec![0i16; 5760];
+        let samples = dec
+            .decode(data, &mut pcm, false)
+            .map_err(|e| format!("opus decode: {e}"))?;
+        pcm.truncate(samples);
+        let mut out = Vec::with_capacity(samples * 2);
+        for s in pcm {
+            out.extend_from_slice(&s.to_le_bytes());
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn speaker_pop_pcm_internal(&self, max_bytes: u64) -> Vec<u8> {
+        let mut cons = self.speaker_ring_cons.lock().unwrap();
+        let n = max_bytes as usize;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            match cons.pop() {
+                Ok(b) => out.push(b),
+                Err(_) => break,
+            }
+        }
+        if !out.is_empty() {
+            self.speaker_pending_bytes
+                .fetch_sub(out.len(), Ordering::Relaxed);
+        }
+        out
+    }
+
+    pub(crate) fn speaker_pending_bytes_get_internal(&self) -> u64 {
+        self.speaker_pending_bytes.load(Ordering::Relaxed) as u64
+    }
+
+    pub(crate) fn speaker_eos_get_internal(&self) -> bool {
+        self.speaker_eos.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn speaker_sample_rate_get_internal(&self) -> u32 {
+        self.speaker_sample_rate.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn speaker_clear_internal(&self) {
+        let mut cons = self.speaker_ring_cons.lock().unwrap();
+        while cons.pop().is_ok() {}
+        self.speaker_pending_bytes.store(0, Ordering::Relaxed);
+        self.speaker_eos.store(false, Ordering::Relaxed);
+    }
+
     // ---- inbound dispatch ----
 
     /// Handle one host→device frame on a capability connection. Provider
@@ -715,6 +827,50 @@ impl Agent {
                     );
                 }
             }
+            Some(envelope::Payload::AudioStreamChunk(chunk)) => {
+                if cap != "speaker" {
+                    tracing::warn!(cap, "audio stream to non-speaker, dropping");
+                    return;
+                }
+                if self.speaker_provider().is_none() {
+                    tracing::warn!("speaker: no sink registered, dropping audio");
+                    return;
+                }
+                tracing::error!(
+                    codec = if chunk.codec == 1 { "pcm_s16le" } else if chunk.codec == 2 { "opus" } else { "unknown" },
+                    sample_rate = chunk.sample_rate,
+                    data_len = chunk.data.len(),
+                    end_of_stream = chunk.end_of_stream,
+                    "speaker: received chunk via envelope -> rtrb"
+                );
+                let agent_clone = Arc::clone(self);
+                let codec = chunk.codec;
+                let sr = chunk.sample_rate;
+                let eos = chunk.end_of_stream;
+                let sid = chunk.stream_id;
+                let data = chunk.data;
+                tokio::task::spawn_blocking(move || {
+                    if agent_clone.speaker_provider().is_none() {
+                        return;
+                    }
+                    if codec == 2 {
+                        match agent_clone.decode_opus_cached(sid, &data, sr) {
+                            Ok(pcm) => {
+                                tracing::error!(pcm_len = pcm.len(), eos, "speaker: opus decoded via rtrb cache, pushing");
+                                agent_clone.speaker_push_pcm(pcm, sr, eos);
+                                if eos {
+                                    agent_clone.opus_decoders.lock().unwrap().remove(&sid);
+                                }
+                            }
+                            Err(e) => tracing::error!(error = %e, "speaker: opus decode failed"),
+                        }
+                    } else if codec == 1 {
+                        agent_clone.speaker_push_pcm(data, sr, eos);
+                    } else {
+                        tracing::warn!(codec, "speaker: unsupported codec via envelope, dropping");
+                    }
+                });
+            }
             Some(envelope::Payload::SessionClose(_)) => {
                 tracing::info!(cap, "host closed session");
             }
@@ -734,9 +890,9 @@ impl Agent {
     }
 }
 
-fn spawn_cap_loop(agent: Arc<Agent>, cap: String, stop_rx: watch::Receiver<bool>) {
+fn spawn_device_loop(agent: Arc<Agent>, caps: Vec<String>, stop_rx: watch::Receiver<bool>) {
     tokio::spawn(async move {
-        cap_loop(agent, cap, stop_rx).await;
+        device_loop(agent, caps, stop_rx).await;
     });
 }
 
@@ -755,10 +911,6 @@ fn map_action_status(status: i32) -> ActionReplyStatus {
     }
 }
 
-/// Install the tracing subscriber once (no-op on repeat calls) so protocol
-/// logs reach logcat. Android has no default tracing writer; tracing-android
-/// routes events to `__android_log_write` (visible via `adb logcat`). On the
-/// host the events go to stderr instead.
 fn init_tracing() {
     use std::sync::Once;
     use tracing_subscriber::layer::SubscriberExt;
@@ -779,29 +931,27 @@ fn init_tracing() {
     });
 }
 
-/// One capability's reconnect loop: connect → register → read/write until the
-/// connection dies or the agent shuts down, then backoff and retry. A session
-/// that lived ≥ [BACKOFF_RESET_AFTER] counts as healthy and resets the backoff
-/// (R-06: no more permanent 30 s stalls after a burst of flaps).
-async fn cap_loop(agent: Arc<Agent>, cap: String, mut stop_rx: watch::Receiver<bool>) {
+async fn device_loop(agent: Arc<Agent>, caps: Vec<String>, mut stop_rx: watch::Receiver<bool>) {
     let mut backoff = BACKOFF_INITIAL;
     loop {
         if agent.shutdown.load(Ordering::SeqCst) || *stop_rx.borrow() {
             return;
         }
         let started = tokio::time::Instant::now();
-        match one_cycle(agent.clone(), cap.clone()).await {
-            Ok(()) => tracing::info!(cap, "connection closed"),
+        let caps_clone = caps.clone();
+        match device_cycle(agent.clone(), caps_clone).await {
+            Ok(()) => {
+                tracing::info!(device_id = %agent.config.device_id, "device connection closed")
+            }
             Err(AgentError::Shutdown) => return,
             Err(e) => {
-                tracing::warn!(cap, error = %e, "connection failed");
+                tracing::warn!(device_id = %agent.config.device_id, error = %e, "device connection failed");
                 agent.notify_status(ConnectionStatus::ReachabilityFailed {
                     reason: e.to_string(),
                 });
             }
         }
         backoff = next_backoff(backoff, started.elapsed());
-        // poll shutdown during the backoff sleep so stop() is responsive
         let deadline = tokio::time::Instant::now() + backoff;
         loop {
             tokio::select! {
@@ -814,7 +964,6 @@ async fn cap_loop(agent: Arc<Agent>, cap: String, mut stop_rx: watch::Receiver<b
     }
 }
 
-/// Pure decision helper: how long to wait before the next reconnect attempt.
 fn next_backoff(current: Duration, session_lived: Duration) -> Duration {
     if session_lived >= BACKOFF_RESET_AFTER {
         BACKOFF_INITIAL
@@ -823,17 +972,18 @@ fn next_backoff(current: Duration, session_lived: Duration) -> Duration {
     }
 }
 
-/// One connect-register-loop pass for a capability.
-async fn one_cycle(agent: Arc<Agent>, cap: String) -> Result<(), AgentError> {
-    let params = agent.register_params(&cap);
-    let conn = CapConn::connect_and_register(&agent.config.host_url, &params).await?;
+async fn device_cycle(agent: Arc<Agent>, caps: Vec<String>) -> Result<(), AgentError> {
+    let params = agent.register_params();
+    let conn = DeviceConn::connect_and_register(&agent.config.host_url, &params).await?;
     let session_key = conn.session_key();
     let (mut read, mut write, _) = conn.into_parts();
 
-    let (out_tx, out_rx) = mpsc::channel::<Outbound>(64);
+    let (out_tx, out_rx) = mpsc::channel::<Outbound>(256);
     {
-        let mut caps = lock(&agent.caps);
-        caps.insert(cap.clone(), out_tx.clone());
+        let mut map = lock(&agent.caps);
+        for cap in &caps {
+            map.insert(cap.clone(), out_tx.clone());
+        }
     }
     agent.dropped_outbound.store(0, Ordering::Relaxed);
     let prev_live = agent.live.fetch_add(1, Ordering::Relaxed);
@@ -842,7 +992,6 @@ async fn one_cycle(agent: Arc<Agent>, cap: String) -> Result<(), AgentError> {
         agent.notify_state(true);
     }
 
-    // write loop: drains push-path + reply frames, MACs, sends
     let write_task = tokio::spawn(async move {
         use futures_util::SinkExt;
         let mut rx = out_rx;
@@ -862,8 +1011,6 @@ async fn one_cycle(agent: Arc<Agent>, cap: String) -> Result<(), AgentError> {
         }
     });
 
-    // device→host liveness ping (R-06): keeps half-open TCP detectable by the
-    // read deadline even when neither side has user traffic
     let ping_task = spawn_ping_task(out_tx.clone());
 
     let result = loop {
@@ -889,21 +1036,54 @@ async fn one_cycle(agent: Arc<Agent>, cap: String) -> Result<(), AgentError> {
             Some(Ok(_)) => continue,
             Some(Err(e)) => break Err(AgentError::from(e)),
         };
-        if is_kernel_routed(&frame) {
+        if frame.flags & FLAG_RAW_BINARY != 0 {
+            let target = target_str(&frame);
+            tracing::error!(target = %target, flags = frame.flags, payload_len = frame.payload.len(), "raw binary frame received");
+            let cap = target.split_once('.').map(|(_, c)| c).unwrap_or("speaker");
+            let agent_c = Arc::clone(&agent);
+            let payload = frame.payload.as_ref().to_vec();
+            let cap_owned = cap.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::caps::audio::handle_raw_inbound(&agent_c, &payload, &cap_owned);
+            });
+        } else if is_kernel_routed(&frame) {
+            let target = target_str(&frame);
+            let mut cap = target
+                .split_once('.')
+                .map(|(_, c)| c.to_string())
+                .unwrap_or_default();
+            if cap.is_empty() {
+                if let Ok(env) = Envelope::decode(frame.payload.as_ref()) {
+                    if let Some(envelope::Payload::ActionRequest(req)) = env.payload {
+                        if let Some((_, c)) = req.action.split_once('.') {
+                            cap = c.to_string();
+                        }
+                    }
+                }
+            }
+            if cap.is_empty() {
+                cap = caps.first().cloned().unwrap_or_default();
+            }
             agent.dispatch_inbound(&frame, &cap, &out_tx).await;
         } else {
-            tracing::trace!(cap, target = %target_str(&frame), "device-traffic frame");
+            let target = target_str(&frame);
+            tracing::trace!(device_id = %agent.config.device_id, target = %target, "device-traffic frame");
         }
     };
 
     write_task.abort();
     ping_task.abort();
     let prev_live = agent.live.fetch_sub(1, Ordering::Relaxed);
-    lock(&agent.caps).remove(&cap);
+    {
+        let mut map = lock(&agent.caps);
+        for cap in &caps {
+            map.remove(cap);
+        }
+    }
     agent.purge_pending();
     let dropped = agent.dropped_outbound.swap(0, Ordering::Relaxed);
     if dropped > 0 {
-        tracing::warn!(cap, dropped, "outbound frames dropped during session");
+        tracing::warn!(device_id = %agent.config.device_id, dropped, "outbound frames dropped during session");
     }
     if prev_live == 1 {
         *lock(&agent.state) = AgentState::Disconnected;
@@ -1058,5 +1238,27 @@ mod tests {
             ActionReplyStatus::StreamBackpressure
         ));
         assert!(matches!(map_action_status(999), ActionReplyStatus::Error));
+    }
+}
+
+#[uniffi::export]
+impl Agent {
+    pub fn speaker_push_pcm(&self, pcm: Vec<u8>, sample_rate: u32, eos: bool) -> u64 {
+        self.speaker_push_pcm_internal(pcm, sample_rate, eos)
+    }
+    pub fn speaker_pop_pcm(&self, max_bytes: u64) -> Vec<u8> {
+        self.speaker_pop_pcm_internal(max_bytes)
+    }
+    pub fn speaker_pending_bytes_get(&self) -> u64 {
+        self.speaker_pending_bytes_get_internal()
+    }
+    pub fn speaker_eos_get(&self) -> bool {
+        self.speaker_eos_get_internal()
+    }
+    pub fn speaker_sample_rate_get(&self) -> u32 {
+        self.speaker_sample_rate.load(Ordering::Relaxed)
+    }
+    pub fn speaker_clear(&self) {
+        self.speaker_clear_internal()
     }
 }

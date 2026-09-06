@@ -142,7 +142,9 @@ pub fn dnd(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Value, Stri
                 return Err(r#"dnd set requires {"mode": "..."}"#.into());
             }
             if !p.set_filter(mode.clone()) {
-                return Err(format!("failed to set dnd filter `{mode}` (no policy access?)"));
+                return Err(format!(
+                    "failed to set dnd filter `{mode}` (no policy access?)"
+                ));
             }
             Ok(serde_json::json!({ "filter": p.filter() }))
         }
@@ -182,7 +184,9 @@ pub fn brightness(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Valu
             let p_params = params(req);
             if let Some(auto) = p_params.get("auto").and_then(|v| v.as_bool()) {
                 if !p.set_auto(auto) {
-                    return Err("failed to change adaptive brightness (WRITE_SETTINGS denied?)".into());
+                    return Err(
+                        "failed to change adaptive brightness (WRITE_SETTINGS denied?)".into(),
+                    );
                 }
             }
             if let Some(level) = p_params.get("level").and_then(|v| v.as_u64()) {
@@ -194,7 +198,9 @@ pub fn brightness(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Valu
                 }
             }
             if p_params.get("level").is_none() && p_params.get("auto").is_none() {
-                return Err(r#"brightness set requires {"level": 0..255} and/or {"auto": bool}"#.into());
+                return Err(
+                    r#"brightness set requires {"level": 0..255} and/or {"auto": bool}"#.into(),
+                );
             }
             Ok(serde_json::json!({
                 "level": p.level(),
@@ -442,8 +448,17 @@ mod tests {
     fn missing_provider_is_a_typed_error_not_a_panic() {
         let agent = agent_with(|_| {});
         for cap in [
-            "device", "wifi", "bluetooth", "dnd", "ringer", "brightness",
-            "flashlight", "launcher", "sms", "calls", "calendar",
+            "device",
+            "wifi",
+            "bluetooth",
+            "dnd",
+            "ringer",
+            "brightness",
+            "flashlight",
+            "launcher",
+            "sms",
+            "calls",
+            "calendar",
         ] {
             let (status, msg) = dispatch(&agent, cap, request("", serde_json::json!({})));
             assert_eq!(status, ERR, "cap `{cap}`");
@@ -482,7 +497,9 @@ mod tests {
     }
     impl FakeWifi {
         fn new() -> Self {
-            Self { scan_calls: Mutex::new(0) }
+            Self {
+                scan_calls: Mutex::new(0),
+            }
         }
     }
     impl crate::ffi::WifiProvider for FakeWifi {
@@ -510,7 +527,10 @@ mod tests {
     struct FakeBt;
     impl crate::ffi::BluetoothProvider for FakeBt {
         fn status(&self) -> Option<BluetoothStatus> {
-            Some(BluetoothStatus { enabled: true, adapter_name: "phone".into() })
+            Some(BluetoothStatus {
+                enabled: true,
+                adapter_name: "phone".into(),
+            })
         }
         fn paired(&self) -> Vec<PairedBluetoothDevice> {
             vec![PairedBluetoothDevice {
@@ -526,7 +546,11 @@ mod tests {
     }
     impl crate::ffi::DndProvider for FakeDnd {
         fn filter(&self) -> String {
-            self.set_to.lock().unwrap().clone().unwrap_or_else(|| "off".into())
+            self.set_to
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| "off".into())
         }
         fn set_filter(&self, mode: String) -> bool {
             *self.set_to.lock().unwrap() = Some(mode);
@@ -737,18 +761,31 @@ mod tests {
     #[test]
     fn bluetooth_status_and_paired() {
         let agent = agent_with(|a| a.set_bluetooth(std::sync::Arc::new(FakeBt)));
-        let (_, body) = dispatch(&agent, "bluetooth", request("status", serde_json::json!({})));
+        let (_, body) = dispatch(
+            &agent,
+            "bluetooth",
+            request("status", serde_json::json!({})),
+        );
         assert!(body.contains("\"adapter_name\":\"phone\""));
-        let (_, body) = dispatch(&agent, "bluetooth", request("paired", serde_json::json!({})));
+        let (_, body) = dispatch(
+            &agent,
+            "bluetooth",
+            request("paired", serde_json::json!({})),
+        );
         assert!(body.contains("JBL"));
     }
 
     #[test]
     fn dnd_set_updates_filter_and_requires_mode() {
-        let dnd = std::sync::Arc::new(FakeDnd { set_to: Mutex::new(None) });
+        let dnd = std::sync::Arc::new(FakeDnd {
+            set_to: Mutex::new(None),
+        });
         let agent = agent_with(|a| a.set_dnd(dnd));
-        let (status, _) =
-            dispatch(&agent, "dnd", request("set", serde_json::json!({ "mode": "priority" })));
+        let (status, _) = dispatch(
+            &agent,
+            "dnd",
+            request("set", serde_json::json!({ "mode": "priority" })),
+        );
         assert_eq!(status, OK);
         let (_, body) = dispatch(&agent, "dnd", request("get", serde_json::json!({})));
         assert_eq!(body, r#"{"filter":"priority"}"#);
@@ -761,21 +798,33 @@ mod tests {
     #[test]
     fn dnd_refusal_surfaces_as_error() {
         let agent = agent_with(|a| a.set_dnd(std::sync::Arc::new(RefusingDnd)));
-        let (status, msg) =
-            dispatch(&agent, "dnd", request("set", serde_json::json!({ "mode": "none" })));
+        let (status, msg) = dispatch(
+            &agent,
+            "dnd",
+            request("set", serde_json::json!({ "mode": "none" })),
+        );
         assert_eq!(status, ERR);
         assert!(msg.contains("policy access"));
     }
 
     #[test]
     fn ringer_rejects_invalid_mode() {
-        let agent =
-            agent_with(|a| a.set_ringer(std::sync::Arc::new(FakeRinger { current: Mutex::new("normal".into()) })));
-        let (status, _) =
-            dispatch(&agent, "ringer", request("set", serde_json::json!({ "mode": "loud" })));
+        let agent = agent_with(|a| {
+            a.set_ringer(std::sync::Arc::new(FakeRinger {
+                current: Mutex::new("normal".into()),
+            }))
+        });
+        let (status, _) = dispatch(
+            &agent,
+            "ringer",
+            request("set", serde_json::json!({ "mode": "loud" })),
+        );
         assert_eq!(status, ERR, "invalid mode must not silently succeed");
-        let (status, body) =
-            dispatch(&agent, "ringer", request("set", serde_json::json!({ "mode": "vibrate" })));
+        let (status, body) = dispatch(
+            &agent,
+            "ringer",
+            request("set", serde_json::json!({ "mode": "vibrate" })),
+        );
         assert_eq!(status, OK);
         assert_eq!(body, r#"{"mode":"vibrate"}"#);
     }
@@ -788,8 +837,11 @@ mod tests {
                 auto: Mutex::new(false),
             }))
         });
-        let (status, msg) =
-            dispatch(&agent, "brightness", request("set", serde_json::json!({ "level": 999 })));
+        let (status, msg) = dispatch(
+            &agent,
+            "brightness",
+            request("set", serde_json::json!({ "level": 999 })),
+        );
         assert_eq!(status, ERR);
         assert!(msg.contains("0..=255"));
 
@@ -808,8 +860,16 @@ mod tests {
 
     #[test]
     fn flashlight_toggle_flips_state() {
-        let agent = agent_with(|a| a.set_flashlight(std::sync::Arc::new(FakeTorch { on: Mutex::new(false) })));
-        let (status, body) = dispatch(&agent, "flashlight", request("toggle", serde_json::json!({})));
+        let agent = agent_with(|a| {
+            a.set_flashlight(std::sync::Arc::new(FakeTorch {
+                on: Mutex::new(false),
+            }))
+        });
+        let (status, body) = dispatch(
+            &agent,
+            "flashlight",
+            request("toggle", serde_json::json!({})),
+        );
         assert_eq!(status, OK);
         assert_eq!(body, r#"{"on":true}"#);
         let (_, body) = dispatch(&agent, "flashlight", request("get", serde_json::json!({})));
@@ -829,12 +889,17 @@ mod tests {
 
     #[test]
     fn launcher_list_is_capped_and_open_needs_package() {
-        let launcher = std::sync::Arc::new(FakeLauncher { last_opened: Mutex::new(None) });
+        let launcher = std::sync::Arc::new(FakeLauncher {
+            last_opened: Mutex::new(None),
+        });
         let provider: std::sync::Arc<dyn crate::ffi::LauncherProvider> = launcher.clone();
         let agent = agent_with(|a| a.set_launcher(provider));
 
-        let (status, body) =
-            dispatch(&agent, "launcher", request("list", serde_json::json!({ "limit": 5000 })));
+        let (status, body) = dispatch(
+            &agent,
+            "launcher",
+            request("list", serde_json::json!({ "limit": 5000 })),
+        );
         assert_eq!(status, OK);
         let arr: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
         assert_eq!(arr.len(), LAUNCHER_MAX_LIMIT as usize);
@@ -859,8 +924,11 @@ mod tests {
     #[test]
     fn sms_inbox_clamps_limit_and_applies_query() {
         let agent = agent_with(|a| a.set_sms(std::sync::Arc::new(FakeSms)));
-        let (status, body) =
-            dispatch(&agent, "sms", request("inbox", serde_json::json!({ "query": "body-1" })));
+        let (status, body) = dispatch(
+            &agent,
+            "sms",
+            request("inbox", serde_json::json!({ "query": "body-1" })),
+        );
         assert_eq!(status, OK);
         let arr: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
         assert_eq!(arr.len(), 1);
@@ -868,14 +936,21 @@ mod tests {
 
         let (_, body) = dispatch(&agent, "sms", request("inbox", serde_json::json!({})));
         let arr: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
-        assert_eq!(arr.len(), 5, "fake provider only has 5 rows; limit clamped to ceiling");
+        assert_eq!(
+            arr.len(),
+            5,
+            "fake provider only has 5 rows; limit clamped to ceiling"
+        );
     }
 
     #[test]
     fn calls_recent_clamps_limit() {
         let agent = agent_with(|a| a.set_calls(std::sync::Arc::new(FakeCalls)));
-        let (_, body) =
-            dispatch(&agent, "calls", request("recent", serde_json::json!({ "limit": 99 })));
+        let (_, body) = dispatch(
+            &agent,
+            "calls",
+            request("recent", serde_json::json!({ "limit": 99 })),
+        );
         let arr: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
         assert_eq!(arr.len(), 3);
         assert_eq!(arr[0]["type"], "incoming");
@@ -883,11 +958,17 @@ mod tests {
 
     #[test]
     fn calendar_upcoming_and_add_roundtrip() {
-        let fake = std::sync::Arc::new(FakeCalendar { added: Mutex::new(Vec::new()) });
+        let fake = std::sync::Arc::new(FakeCalendar {
+            added: Mutex::new(Vec::new()),
+        });
         let cal: std::sync::Arc<dyn crate::ffi::CalendarProvider> = fake.clone();
         let agent = agent_with(|a| a.set_calendar(cal));
 
-        let (status, body) = dispatch(&agent, "calendar", request("upcoming", serde_json::json!({})));
+        let (status, body) = dispatch(
+            &agent,
+            "calendar",
+            request("upcoming", serde_json::json!({})),
+        );
         assert_eq!(status, OK);
         let arr: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
         assert_eq!(arr.len(), 2);
@@ -915,7 +996,9 @@ mod tests {
     #[test]
     fn calendar_add_validates_title_and_time_order() {
         let agent = agent_with(|a| {
-            a.set_calendar(std::sync::Arc::new(FakeCalendar { added: Mutex::new(Vec::new()) }))
+            a.set_calendar(std::sync::Arc::new(FakeCalendar {
+                added: Mutex::new(Vec::new()),
+            }))
         });
         let (status, msg) = dispatch(&agent, "calendar", request("add", serde_json::json!({})));
         assert_eq!(status, ERR);
@@ -936,9 +1019,20 @@ mod tests {
     #[test]
     fn responses_are_kernel_routed_envelopes() {
         use prost::Message as _;
-        let agent = agent_with(|a| a.set_ringer(std::sync::Arc::new(FakeRinger { current: Mutex::new("normal".into()) })));
-        let env = super::super::handle_action_request(&agent, "ringer", request("get", serde_json::json!({})));
-        assert!(matches!(env.payload, Some(envelope::Payload::ActionResponse(_))));
+        let agent = agent_with(|a| {
+            a.set_ringer(std::sync::Arc::new(FakeRinger {
+                current: Mutex::new("normal".into()),
+            }))
+        });
+        let env = super::super::handle_action_request(
+            &agent,
+            "ringer",
+            request("get", serde_json::json!({})),
+        );
+        assert!(matches!(
+            env.payload,
+            Some(envelope::Payload::ActionResponse(_))
+        ));
         let mut payload = Vec::new();
         env.encode(&mut payload).unwrap();
         let frame = crate::protocol::build_frame("kernel", 0, payload);

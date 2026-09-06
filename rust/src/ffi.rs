@@ -82,9 +82,7 @@ pub enum ConnectionStatus {
     Connecting,
     /// A reconnect attempt failed while nothing is live — carries the OS/
     /// transport reason (e.g. "No route to host", "Connection refused").
-    ReachabilityFailed {
-        reason: String,
-    },
+    ReachabilityFailed { reason: String },
 }
 
 /// Kotlin-implemented observer the core notifies on connection-state changes
@@ -137,7 +135,12 @@ pub trait ContactsProvider: Send + Sync {
 /// to Kotlin's AudioTrack.
 #[uniffi::export(with_foreign)]
 pub trait SpeakerSink: Send + Sync {
-    fn play_pcm(&self, pcm: Vec<u8>);
+    /// Append a chunk of PCM (s16le mono 24 kHz) to the sink's accumulator.
+    /// The sink decides when to play the accumulated buffer.
+    fn append_pcm(&self, pcm: Vec<u8>, end_of_stream: bool);
+    /// Force playback of whatever has accumulated so far, regardless of EOS.
+    /// Used by tests and shutdown paths.
+    fn flush(&self);
 }
 
 // ---------- extended device controls (Tier-1.5 capabilities) ----------
