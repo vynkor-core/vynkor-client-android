@@ -35,6 +35,9 @@ import dev.vynkor.agent.caps.SmsProviderImpl
 import dev.vynkor.agent.caps.SpeakerSinkImpl
 import dev.vynkor.agent.caps.WifiProviderImpl
 import java.util.concurrent.Executors
+import android.media.AudioManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 
 /** Foreground service holding the agent connection. One per active host. */
 class AgentService : Service() {
@@ -47,6 +50,10 @@ class AgentService : Service() {
     private var batteryEvents: BatteryEventSource? = null
     private val cleanupExecutor =
         Executors.newSingleThreadExecutor { r -> Thread(r, "vynkor-agent-cleanup") }
+    private var focusRequest: AudioFocusRequest? = null
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        Log.i("AgentService", "audio focus change: $change")
+    }
 
     /** Live line shown in the foreground notification (updated by observer). */
     @Volatile
@@ -59,6 +66,33 @@ class AgentService : Service() {
         current = this
         createChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
+        requestMediaAudioFocus()
+    }
+
+    private fun requestMediaAudioFocus() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val attrs = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(attrs)
+            .setOnAudioFocusChangeListener(focusListener)
+            .setAcceptsDelayedFocusGain(true)
+            .setWillPauseWhenDucked(false)
+            .build()
+        val result = am.requestAudioFocus(req)
+        focusRequest = req
+        Log.i("AgentService", "requestAudioFocus result=$result")
+    }
+
+    private fun abandonMediaAudioFocus() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        focusRequest?.let {
+            am.abandonAudioFocusRequest(it)
+            Log.i("AgentService", "abandonAudioFocusRequest")
+        }
+        focusRequest = null
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -95,6 +129,12 @@ class AgentService : Service() {
             userId = profile.userId.ifBlank { "default" },
         )
         val a = Agent(config)
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        am.mode = AudioManager.MODE_NORMAL
+        am.isSpeakerphoneOn = true
+        am.isMicrophoneMute = false
+        val initial = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+        Log.i("AgentService", "audio mode=NORMAL stream_music_vol=$initial max=${am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)} speakerphone=${am.isSpeakerphoneOn}")
         a.setBattery(BatteryProviderImpl(this))
         a.setLocation(LocationProviderImpl(this))
         a.setClipboard(ClipboardProviderImpl(this))
@@ -102,6 +142,7 @@ class AgentService : Service() {
         val speaker = SpeakerSinkImpl()
         a.setSpeaker(speaker)
         sink = speaker
+        speaker.attachAgent(a)
         a.setDeviceInfo(DeviceInfoProviderImpl(this))
         a.setWifi(WifiProviderImpl(this))
         a.setBluetooth(BluetoothProviderImpl(this))
@@ -195,6 +236,7 @@ class AgentService : Service() {
     }
 
     override fun onDestroy() {
+        abandonMediaAudioFocus()
         current = null
         stopAgent()
         super.onDestroy()
