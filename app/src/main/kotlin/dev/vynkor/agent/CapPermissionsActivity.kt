@@ -38,6 +38,12 @@ class CapPermissionsActivity : AppCompatActivity() {
     )
 
     private val rows = listOf(
+        // Android 17: the host link itself (NEARBY_DEVICES group).
+        Row(
+            R.string.wizard_perm_lan_title, R.string.wizard_perm_lan_subtitle,
+            listOf(dev.vynkor.agent.agent.AgentPermissions.ACCESS_LOCAL_NETWORK),
+            minSdk = 37,
+        ),
         Row(
             R.string.perm_location_title, R.string.perm_location_subtitle,
             listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),

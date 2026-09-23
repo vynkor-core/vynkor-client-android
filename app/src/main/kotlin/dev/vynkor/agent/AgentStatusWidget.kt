@@ -100,7 +100,10 @@ class AgentStatusWidget : AppWidgetProvider() {
                     ),
                 )
                 setTextViewText(R.id.widgetStatus, statusLine)
-                if (online) {
+                // Label follows what a tap does (toggle acts on "agent
+                // running", not "connected"): while reconnecting the button
+                // said Start yet stopped the agent.
+                if (agentOn) {
                     setTextViewText(R.id.widgetToggle, ctx.getString(R.string.widget_stop))
                     setTextColor(
                         R.id.widgetToggle,

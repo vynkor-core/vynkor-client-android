@@ -1,5 +1,9 @@
 package dev.vynkor.agent
 
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import androidx.lifecycle.lifecycleScope
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -35,15 +39,17 @@ class ProjectFilesActivity : AppCompatActivity() {
     private val picker =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isNullOrEmpty()) return@registerForActivityResult
-            var added = 0
-            uris.forEach { uri ->
-                takePersistableGrant(uri)
-                if (ProjectFilesStore.add(this, profileId, projectId, uri, null, null) != null) {
-                    added++
+            uris.forEach { takePersistableGrant(it) }
+            // Copies run off the main thread (files can be large).
+            lifecycleScope.launch {
+                val added = withContext(Dispatchers.IO) {
+                    uris.count { uri ->
+                        ProjectFilesStore.add(this@ProjectFilesActivity, profileId, projectId, uri, null, null) != null
+                    }
                 }
+                if (added == 0) snackText(getString(R.string.attachment_failed_copy_generic))
+                refresh()
             }
-            if (added == 0) snackText(getString(R.string.attachment_failed_copy_generic))
-            refresh()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -69,15 +69,26 @@ class LockActivity : AppCompatActivity() {
     }
 
     private fun verifyPin() {
+        val waitMs = SecurityStore.lockoutRemainingMs(this)
+        if (waitMs > 0) {
+            binding.pinInput.setText("")
+            Snackbar.make(
+                binding.root,
+                getString(R.string.pin_locked_wait_fmt, (waitMs + 999) / 1000),
+                Snackbar.LENGTH_LONG,
+            ).show()
+            return
+        }
         val pin = binding.pinInput.text?.toString().orEmpty()
         if (SecurityStore.verify(this, pin)) {
             onSuccess()
             return
         }
         failedAttempts++
+        val lockedUntil = SecurityStore.registerFailure(this)
         binding.errorText.visibility = android.view.View.VISIBLE
         binding.pinInput.setText("")
-        if (failedAttempts >= MAX_ATTEMPTS) {
+        if (lockedUntil > 0 || failedAttempts >= MAX_ATTEMPTS) {
             Snackbar.make(binding.root, R.string.too_many_attempts, Snackbar.LENGTH_LONG).show()
             finishAffinity()
         }
@@ -104,6 +115,7 @@ class LockActivity : AppCompatActivity() {
     }
 
     private fun onSuccess() {
+        SecurityStore.registerSuccess(this)
         AppLock.unlocked = true
         AppLock.backgroundedAtMs = null
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)

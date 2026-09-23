@@ -20,7 +20,7 @@ app/    the Kotlin/Gradle Android app: foreground service, capability providers
 ```
 
 Rust = protocol, Kotlin = device I/O, UniFFI is the boundary. The core reuses
-`vynkor-wire` 0.2.3 (proto v1.6) verbatim — no reimplemented crypto.
+`vynkor-wire` 0.0.4 (proto v1.7) verbatim — no reimplemented crypto.
 
 ## Build
 
@@ -39,21 +39,38 @@ export ANDROID_HOME=$HOME/.android-sdk   # unset ANDROID_SDK_ROOT if it differs
 
 ## Run against a host
 
-1. Host kernel with `jwt_secret` (≥32 bytes), `tls: false` for a plain-WS LAN
-   test (or pin the served cert), `bind: 0.0.0.0`, and the WS port allowed in the
-   host firewall (UFW gotcha — see implementation notes).
-2. Mint a device token bound to the same id the app will use:
+1. Host kernel with `jwt_secret` (≥32 bytes), `bind: 0.0.0.0` and the WS port
+   open in the host firewall (UFW gotcha — see implementation notes). TLS
+   (`tls_cert_path`/`tls_key_path`) is recommended: the pairing link carries
+   the served cert and the app pins exactly that cert, so the host's LAN IP may
+   change (DHCP) without breaking TLS.
+2. Pair — issues a per-device credential and prints a QR + `vynkor://pair` link:
    ```bash
-   vyn token --config <host-config> mint \
-     --device my-phone \
+   vyn device --config <host-config> connect --device my-phone \
      --permissions "PERMISSION_IPC_SEND,PERMISSION_EVENT_PUBLISH,PERMISSION_AUDIO_STREAM" \
-     --ipc-targets kernel --ttl-seconds 86400
+     --ipc-targets kernel --ttl-seconds 2592000
    ```
-3. In the app: Host URL `ws://<host-ip>:<port>`, Device ID `my-phone`
-   (**must match the JWT `sub`**), Device JWT, Host jwt_secret. Connect.
-4. Verify: `adb logcat -s vynkor` shows `registered on host
-   plugin_id=my-phone.<cap>` × 7; `GET /devices` on the host lists the device
-   `state: online`.
+   Scan the QR in the app (Settings → Hosts → Scan) or open the link on the
+   phone — over USB: `adb shell am start -a android.intent.action.VIEW -d '<link>'`.
+   Re-pairing the same host+device updates the existing profile in place.
+3. Android 17: allow **Nearby devices** (local network) when asked — without
+   it the LAN connection is silently dropped; the app then says so instead of
+   a bare timeout.
+4. Verify: `adb logcat -s vynkor` shows `registered on host plugin_id=my-phone`;
+   `vyn devices` lists `my-phone online` with its capabilities.
+
+## Chat: agent or model
+
+The subtitle under the chat title is where messages go; tap the toolbar to
+switch:
+
+* **Agent** (default) — the host `agent` plugin (`goal_start`): it plans,
+  calls tools through the kernel and answers. Tools marked
+  `requires_confirmation` pause the goal; the app asks you and resumes it
+  (`goal_resume`). The goal is the last user message; earlier turns and
+  project files go in as `context`.
+* **Model** — a bare `ai.chat_completion` with the chosen model (no tools).
+  Models listed by the host are sent by id; the host resolves the key.
 
 ## Capabilities
 

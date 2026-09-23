@@ -38,7 +38,7 @@ object Diagnostics {
             appendLn("url: ${active.hostUrl}")
             appendLn("device_id: ${active.deviceId}")
             appendLn("jwt: ${present(active.jwtToken)}  secret: ${present(active.deviceSecret)}  cert pinned: ${active.certPem.isNotBlank()}")
-            appendLn("model: ${active.effectiveModel().ifBlank { "-" }}  agent: ${active.aiAgent.ifBlank { "-" }}")
+            appendLn("chat: ${if (active.usesAgent) "host agent plugin" else "ai model"}  model: ${active.effectiveModel().ifBlank { "-" }}  ai profile: ${active.aiAgent.ifBlank { "-" }}")
         }
         appendLn()
 
@@ -57,6 +57,10 @@ object Diagnostics {
         perm(context, "camera", Manifest.permission.CAMERA)?.let { appendLn(it) }
         if (Build.VERSION.SDK_INT >= 33) {
             perm(context, "notifications", Manifest.permission.POST_NOTIFICATIONS)?.let { appendLn(it) }
+        }
+        if (Build.VERSION.SDK_INT >= 37) {
+            perm(context, "local network", dev.vynkor.agent.agent.AgentPermissions.ACCESS_LOCAL_NETWORK)
+                ?.let { appendLn(it) }
         }
         val dnd = context.getSystemService(NotificationManager::class.java)
             ?.isNotificationPolicyAccessGranted

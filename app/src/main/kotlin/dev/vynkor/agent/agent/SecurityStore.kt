@@ -18,6 +18,13 @@ object SecurityStore {
     private const val KEY_RELOCK_MIN = "relock_minutes"
     private const val KEY_PIN_SALT = "pin_salt"
     private const val KEY_PIN_HASH = "pin_hash"
+    private const val KEY_FAILED = "pin_failed_attempts"
+    private const val KEY_LOCKED_UNTIL = "pin_locked_until"
+
+    /** Free wrong PINs before the first lockout. */
+    private const val FREE_ATTEMPTS = 5
+    private const val BASE_LOCKOUT_MS = 30_000L
+    private const val MAX_LOCKOUT_MS = 60 * 60_000L
 
     data class Settings(
         val enabled: Boolean,
@@ -50,7 +57,8 @@ object SecurityStore {
 
     /** Null/blank clears the PIN (fingerprint-only mode). */
     fun setPin(context: Context, plain: String?) {
-        val p = prefs(context).edit()
+        // A new (or cleared) PIN starts with a clean failure record.
+        val p = prefs(context).edit().remove(KEY_FAILED).remove(KEY_LOCKED_UNTIL)
         if (plain.isNullOrBlank()) {
             p.remove(KEY_PIN_HASH).remove(KEY_PIN_SALT)
         } else {
@@ -71,6 +79,32 @@ object SecurityStore {
         }
         return hash(plain, salt) == s.pinHash
     }
+
+    /**
+     * Wrong-PIN accounting survives process death: the old in-memory counter
+     * reset on every relaunch, which made the 5-try limit meaningless.
+     * Returns the resulting lockout end (0 = none).
+     */
+    fun registerFailure(context: Context): Long {
+        val p = prefs(context)
+        val failed = p.getInt(KEY_FAILED, 0) + 1
+        val until = if (failed >= FREE_ATTEMPTS) {
+            val backoff = BASE_LOCKOUT_MS shl (failed - FREE_ATTEMPTS).coerceAtMost(7)
+            System.currentTimeMillis() + backoff.coerceAtMost(MAX_LOCKOUT_MS)
+        } else {
+            0L
+        }
+        p.edit().putInt(KEY_FAILED, failed).putLong(KEY_LOCKED_UNTIL, until).commit()
+        return until
+    }
+
+    fun registerSuccess(context: Context) {
+        prefs(context).edit().remove(KEY_FAILED).remove(KEY_LOCKED_UNTIL).apply()
+    }
+
+    /** Milliseconds until PIN entry is allowed again (0 = now). */
+    fun lockoutRemainingMs(context: Context): Long =
+        (prefs(context).getLong(KEY_LOCKED_UNTIL, 0L) - System.currentTimeMillis()).coerceAtLeast(0L)
 
     private fun hash(plain: String, salt: ByteArray): String =
         Base64.encodeToString(

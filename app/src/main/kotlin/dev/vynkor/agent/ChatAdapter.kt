@@ -137,6 +137,11 @@ class ChatAdapter(
         fun bind(message: ChatMessage, isSpeaking: Boolean) {
             val lp = binding.bubble.layoutParams as FrameLayout.LayoutParams
             renderAttachments(message)
+            // The footer spans the text's width; a one-word reply ("51")
+            // squeezed copy/more/speak into a sliver. Assistant bubbles get
+            // room for all three buttons; others size to their text.
+            binding.messageText.minWidth = if (message.role == "user" || message.role == "error") 0
+            else (FOOTER_MIN_WIDTH_DP * itemView.resources.displayMetrics.density).toInt()
             when (message.role) {
                 "user" -> {
                     lp.gravity = Gravity.END
@@ -306,6 +311,9 @@ class ChatAdapter(
             attachment: dev.vynkor.agent.agent.Attachment,
         ): android.graphics.Bitmap? {
             val path = AttachmentStore.fileFor(ctx, chatId, attachment).absolutePath
+            // Rebinds (scroll, typewriter, edits) used to hit the disk and
+            // the decoder on the UI thread every time.
+            thumbCache.get(path)?.let { return it }
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(path, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
@@ -316,7 +324,7 @@ class ChatAdapter(
             return BitmapFactory.decodeFile(
                 path,
                 BitmapFactory.Options().apply { inSampleSize = sample },
-            )
+            )?.also { thumbCache.put(path, it) }
         }
 
         private fun markwon(): Markwon = markwon ?: createMarkwon(ctx).also { markwon = it }
@@ -326,6 +334,12 @@ class ChatAdapter(
 
     companion object {
         private const val TYPING_PAYLOAD = "typing"
+        private const val FOOTER_MIN_WIDTH_DP = 3 * 48
+
+        /** Decoded attachment thumbnails, bounded by bytes (~16 MB). */
+        private val thumbCache = object : android.util.LruCache<String, android.graphics.Bitmap>(16 * 1024 * 1024) {
+            override fun sizeOf(key: String, value: android.graphics.Bitmap) = value.byteCount
+        }
 
         /**
          * Fenced code blocks get a tiny "[⧉](vynkor-copy://N)" line right

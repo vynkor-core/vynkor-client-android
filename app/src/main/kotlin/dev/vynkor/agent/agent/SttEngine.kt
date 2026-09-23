@@ -107,11 +107,18 @@ class SttEngine private constructor(context: Context) {
         }
         commitHead?.let { head ->
             val headText = decode(head)
-            synchronized(session.lock) { session.committedText += headText }
+            synchronized(session.lock) { session.committedText = join(session.committedText, headText) }
         }
         val tail = if (splitAt > 0) snapshot.copyOfRange(splitAt, snapshot.size) else snapshot
         val tailText = decode(tail)
-        return synchronized(session.lock) { session.committedText } + tailText
+        return join(synchronized(session.lock) { session.committedText }, tailText)
+    }
+
+    /** Window seams fall between words: plain concatenation glued them. */
+    private fun join(head: String, tail: String): String = when {
+        head.isBlank() -> tail
+        tail.isBlank() -> head
+        else -> head.trimEnd() + " " + tail.trimStart()
     }
 
     /**
@@ -128,7 +135,7 @@ class SttEngine private constructor(context: Context) {
             session.pending.clear()
             committed = session.committedText
         }
-        return committed + decode(tail)
+        return join(committed, decode(tail))
     }
 
     private fun decode(samples: FloatArray): String {

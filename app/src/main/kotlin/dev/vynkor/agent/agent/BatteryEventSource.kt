@@ -64,6 +64,19 @@ class BatteryEventSource(
         )
     }
 
+    /** Re-sends the current state (e.g. after a reconnect) from the sticky broadcast. */
+    fun resend() {
+        lastCharging = null
+        val sticky = runCatching {
+            appContext.registerReceiver(
+                null,
+                IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+        }.getOrNull() ?: return
+        receiver.onReceive(appContext, sticky)
+    }
+
     fun stop() {
         runCatching { appContext.unregisterReceiver(receiver) }
             .onFailure { Log.w(TAG, "receiver not registered?", it) }

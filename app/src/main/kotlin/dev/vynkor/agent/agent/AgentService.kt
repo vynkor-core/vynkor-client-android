@@ -147,6 +147,9 @@ class AgentService : Service() {
                 AgentHolder.connectionState.value = connected
                 AgentHolder.hostStatus.value =
                     if (connected) HostStatus.Connected else HostStatus.Reconnecting
+                // Changes while offline were dropped; give the host a fresh
+                // snapshot instead of waiting for the next 5% step.
+                if (connected) batteryEvents?.resend()
                 EventLog.push("agent", if (connected) "connected" else "reconnecting")
                 connectionLine = if (connected) {
                     getString(R.string.service_connected_to, hostLabel)
@@ -319,7 +322,21 @@ class AgentService : Service() {
 
         fun start(context: Context) {
             EventLog.push("service", "start requested")
-            ContextCompat.startForegroundService(context, Intent(context, AgentService::class.java))
+            startCatching(context, Intent(context, AgentService::class.java))
+        }
+
+        /**
+         * Background entry points (QS tile, widget, boot-ish restarts) can be
+         * refused a foreground-service start (ForegroundServiceStartNotAllowed
+         * is an IllegalStateException) — log it instead of crashing the process.
+         */
+        private fun startCatching(context: Context, intent: Intent) {
+            try {
+                ContextCompat.startForegroundService(context, intent)
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "foreground service start refused", e)
+                EventLog.push("service", "start refused: ${e.javaClass.simpleName}")
+            }
         }
 
         fun stop(context: Context) {
@@ -335,10 +352,7 @@ class AgentService : Service() {
         fun restartIfRunning(context: Context) {
             if (current == null) return
             EventLog.push("service", "restart requested")
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, AgentService::class.java).setAction(ACTION_RESTART),
-            )
+            startCatching(context, Intent(context, AgentService::class.java).setAction(ACTION_RESTART))
         }
     }
 }

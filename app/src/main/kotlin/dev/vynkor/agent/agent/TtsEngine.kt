@@ -32,16 +32,35 @@ class TtsEngine(context: Context) : TextToSpeech.OnInitListener {
         })
     }
 
+    /** Text asked for before init finished; spoken from [onInit]. */
+    @Volatile
+    private var pending: String? = null
+
+    @Volatile
+    private var failed = false
+
     fun isReady(): Boolean = ready
 
+    /** False once initialization definitively failed. */
+    fun isUsable(): Boolean = !failed
+
+    /**
+     * Speaks now, or right after initialization — the engine binds
+     * asynchronously, and the first tap used to be rejected as "unavailable".
+     */
     fun speak(text: String) {
-        if (!ready || text.isBlank()) return
+        if (text.isBlank() || failed) return
+        if (!ready) {
+            pending = text
+            return
+        }
         tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
     }
 
-    fun isSpeaking(): Boolean = tts.isSpeaking
+    fun isSpeaking(): Boolean = pending != null || tts.isSpeaking
 
     fun stop() {
+        pending = null
         tts.stop()
     }
 
@@ -53,11 +72,17 @@ class TtsEngine(context: Context) : TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.ERROR) {
+            failed = true
+            pending = null
             main.post { onInitFailed?.invoke() }
             return
         }
         ready = true
         tts.language = Locale.getDefault()
+        pending?.let {
+            pending = null
+            speak(it)
+        }
     }
 
     private fun fireDone() {

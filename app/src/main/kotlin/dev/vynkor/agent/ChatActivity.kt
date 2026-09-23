@@ -139,8 +139,7 @@ class ChatActivity : AppCompatActivity() {
                     Uri.fromFile(file),
                     displayName = "photo_${System.currentTimeMillis() / 1000}.jpg",
                     mimeHint = "image/jpeg",
-                )
-                runCatching { file.delete() }
+                ) { runCatching { file.delete() } }
             }
         }
 
@@ -851,15 +850,28 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
-    private fun addPendingAttachment(uri: Uri, displayName: String?, mimeHint: String?) {
+    /**
+     * Copies off the main thread (up to 100 MB — the old inline copy could
+     * ANR). A chat switched meanwhile gets nothing; the orphan is removed.
+     */
+    private fun addPendingAttachment(uri: Uri, displayName: String?, mimeHint: String?, afterCopy: () -> Unit = {}) {
         val chatId = chat.id
-        val attachment = AttachmentStore.copyIn(this, chatId, uri, displayName, mimeHint)
-        if (attachment == null) {
-            snack(R.string.attachment_failed_copy_generic)
-            return
+        lifecycleScope.launch {
+            val attachment = withContext(Dispatchers.IO) {
+                AttachmentStore.copyIn(this@ChatActivity, chatId, uri, displayName, mimeHint)
+            }
+            afterCopy()
+            if (attachment == null) {
+                snack(R.string.attachment_failed_copy_generic)
+                return@launch
+            }
+            if (chat.id != chatId) {
+                AttachmentStore.deleteAll(this@ChatActivity, chatId, listOf(attachment))
+                return@launch
+            }
+            pendingAttachments.add(attachment)
+            renderPendingAttachmentChips()
         }
-        pendingAttachments.add(attachment)
-        renderPendingAttachmentChips()
     }
 
     private fun renderPendingAttachmentChips() {
@@ -1703,7 +1715,7 @@ class ChatActivity : AppCompatActivity() {
 
     private fun toggleSpeak(message: ChatMessage) {
         val engine = ttsEngine() ?: return
-        if (!engine.isReady()) {
+        if (!engine.isUsable()) {
             snack(R.string.tts_unavailable)
             return
         }
