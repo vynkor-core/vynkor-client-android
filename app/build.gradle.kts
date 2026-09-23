@@ -1,19 +1,23 @@
+import com.android.build.api.artifact.SingleArtifact
 import java.io.File
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.kapt)
+    // Kotlin is built into AGP 9; kapt is AGP's legacy-kapt shim.
+    alias(libs.plugins.legacy.kapt)
 }
 
 android {
     namespace = "dev.vynkor.agent"
-    compileSdk = 35
+    // Android 17 (API 37): local-network permission, background-audio
+    // hardening, widget bitmap cap — see docs/ANDROID_17.md.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "dev.vynkor.agent"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
     }
@@ -61,32 +65,19 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         buildConfig = true
         // R-31: generated bindings instead of findViewById.
         viewBinding = true
     }
 
-    // Self-describing artifact names instead of app-<abi>-<variant>.apk:
-    // dist/vynkor-agent-v0.1.0-arm64-v8a-debug.apk
-    // (ABI parsed from the default file name — no internal filter APIs.)
-    applicationVariants.all {
-        val variantName = name
-        outputs.all {
-            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            val abi = output.outputFileName
-                .removePrefix("app-")
-                .substringBeforeLast("-$variantName")
-            output.outputFileName = "vynkor-agent-v$versionName-$abi-$variantName.apk"
-        }
-    }
-
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        // Robolectric's android-all for API 37 pokes FileDescriptor internals
+        // through jdk.internal.access, closed by default on JDK 17+.
+        unitTests.all {
+            it.jvmArgs("--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
+        }
     }
 
     androidResources {
@@ -98,9 +89,44 @@ android {
     sourceSets {
         getByName("main") {
             // generated Kotlin bindings + jniLibs land here
-            java.srcDir("$projectDir/build/generated/uniffi/kotlin")
+            kotlin.srcDir("$projectDir/build/generated/uniffi/kotlin")
             jniLibs.srcDir("$projectDir/build/rustLibs")
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+// Self-describing copies of the APKs in dist/:
+// dist/vynkor-agent-v0.1.0-arm64-v8a-debug.apk. Uses the public variant API
+// (the old applicationVariants/outputFileName hook is gone in AGP 9); the
+// build outputs keep their default app-<abi>-<variant>.apk names, which is
+// what scripts/install-device.sh looks for.
+androidComponents {
+    onVariants { variant ->
+        val variantName = variant.name
+        val cap = variantName.replaceFirstChar { it.uppercase() }
+        val apkDir = variant.artifacts.get(SingleArtifact.APK)
+        val loader = variant.artifacts.getBuiltArtifactsLoader()
+        val distDir = rootProject.layout.projectDirectory.dir("dist")
+        val copy = tasks.register("dist${cap}Apks") {
+            inputs.files(apkDir)
+            outputs.dir(distDir)
+            doLast {
+                val built = loader.load(apkDir.get()) ?: return@doLast
+                built.elements.forEach { el ->
+                    val src = File(el.outputFile)
+                    val abi = src.name.removePrefix("app-").substringBeforeLast("-$variantName")
+                    val name = "vynkor-agent-v${el.versionName ?: "0"}-$abi-$variantName.apk"
+                    src.copyTo(distDir.file(name).asFile, overwrite = true)
+                }
+            }
+        }
+        tasks.matching { it.name == "assemble$cap" }.configureEach { finalizedBy(copy) }
     }
 }
 
@@ -122,6 +148,7 @@ dependencies {
     }
     kapt(libs.prism4j.bundler)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.androidx.recyclerview)
@@ -148,7 +175,13 @@ dependencies {
 // multi-ABI release rebuild when rust/ sources are unchanged.
 tasks.register<Exec>("cargoNdkBuild") {
     workingDir = File(rootProject.projectDir, "rust")
-    environment("ANDROID_HOME", System.getenv("ANDROID_HOME") ?: "${System.getProperty("user.home")}/.android-sdk")
+    val sdk = System.getenv("ANDROID_HOME") ?: "${System.getProperty("user.home")}/.android-sdk"
+    environment("ANDROID_HOME", sdk)
+    // audiopus_sys builds opus with CMake, whose Android platform module needs
+    // the NDK named explicitly (cargo-ndk only configures the compilers).
+    val ndk = System.getenv("ANDROID_NDK_ROOT")
+        ?: File(sdk, "ndk").listFiles()?.filter { it.isDirectory }?.maxByOrNull { it.name }?.absolutePath
+    if (ndk != null) environment("ANDROID_NDK_ROOT", ndk)
     val outDir = File(projectDir, "build/rustLibs")
     inputs.files(fileTree("$rootDir/rust/src"))
     inputs.file("$rootDir/rust/Cargo.toml")
