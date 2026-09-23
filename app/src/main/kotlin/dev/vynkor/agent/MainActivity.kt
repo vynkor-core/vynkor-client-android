@@ -14,12 +14,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import dev.vynkor.agent.agent.AgentHolder
+import dev.vynkor.agent.agent.AgentPermissions
 import dev.vynkor.agent.agent.AgentService
 import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.agent.ChatBackup
@@ -146,6 +146,11 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        applyBiometricGate()
     }
 
     override fun onResume() {
@@ -604,7 +609,7 @@ class MainActivity : AppCompatActivity() {
         row.rowIcon.imageTintList = android.content.res.ColorStateList.valueOf(
             com.google.android.material.color.MaterialColors.getColor(
                 row.root,
-                com.google.android.material.R.attr.colorPrimary,
+                androidx.appcompat.R.attr.colorPrimary,
             ),
         )
         row.rowTitle.setText(titleRes)
@@ -616,15 +621,11 @@ class MainActivity : AppCompatActivity() {
      * resolved (not fire-and-forget alongside it).
      */
     private fun startServiceAfterPermissions() {
-        val missing = PERMISSIONS.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isEmpty()) {
+        if (AgentPermissions.requestIfNeeded(this, REQUEST_CODE_PERMS)) {
+            pendingServiceStart = true
+        } else {
             AgentService.start(this)
-            return
         }
-        pendingServiceStart = true
-        ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_PERMS)
     }
 
     override fun onRequestPermissionsResult(
@@ -642,13 +643,5 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQUEST_CODE_PERMS = 42
         private const val MIN_BACKUP_PASSWORD = 4
-
-        internal val PERMISSIONS = arrayOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.READ_CONTACTS,
-            Manifest.permission.POST_NOTIFICATIONS,
-        )
     }
 }

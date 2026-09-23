@@ -46,6 +46,7 @@ import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.databinding.ActivityChatBinding
 import dev.vynkor.agent.databinding.ItemProjectRowBinding
 import dev.vynkor.agent.agent.AgentHolder
+import dev.vynkor.agent.agent.AgentPermissions
 import dev.vynkor.agent.agent.HostStatus
 import dev.vynkor.agent.agent.AgentService
 import dev.vynkor.agent.agent.AiAgent
@@ -74,6 +75,18 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
+
+/**
+ * ACTION_IMAGE_CAPTURE with the output-URI grants spelled out. Android 17
+ * stops granting them implicitly (enforced for apps targeting 18); without
+ * the flags the camera app cannot write the photo into our FileProvider.
+ */
+private class TakePictureWithGrants : ActivityResultContracts.TakePicture() {
+    override fun createIntent(context: Context, input: Uri): Intent =
+        super.createIntent(context, input).addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+        )
+}
 
 class ChatActivity : AppCompatActivity() {
 
@@ -118,7 +131,7 @@ class ChatActivity : AppCompatActivity() {
         }
 
     private val cameraLauncher =
-        registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        registerForActivityResult(TakePictureWithGrants()) { ok ->
             val file = pendingCameraFile
             pendingCameraFile = null
             if (ok && file != null && file.length() > 0) {
@@ -416,6 +429,7 @@ class ChatActivity : AppCompatActivity() {
         val current = ProfileStore.active(this)
         if (current?.id != profile?.id) {
             profile = current
+            AgentService.restartIfRunning(this)
             // Different host — its chats have nothing to do with the query.
             searchQuery = ""
             binding.drawerSearch.setText("")
@@ -511,24 +525,29 @@ class ChatActivity : AppCompatActivity() {
             chat.title.ifBlank { getString(R.string.new_chat) }
     }
 
+    /**
+     * Toolbar subtitle = where the next message goes: "Agent" (host agent
+     * plugin) or the model id (+ ai profile name when one is selected). One
+     * function — the old model/agent pair overwrote each other's text.
+     */
     private fun refreshModelChip() {
         val active = profile
-        val model = active?.effectiveModel()?.takeIf { it.isNotBlank() }
-            ?: hostModels.firstOrNull { it.isDefault }?.id
-            ?: ""
-        binding.toolbar.subtitle = model.ifBlank { null }
+        binding.toolbar.subtitle = when {
+            active == null -> null
+            active.usesAgent -> getString(R.string.chat_target_agent)
+            else -> {
+                val model = active.effectiveModel().ifBlank {
+                    hostModels.firstOrNull { it.isDefault }?.id.orEmpty()
+                }
+                val agentId = active.aiAgent
+                val name = if (agentId.isBlank()) null
+                else hostAgents.firstOrNull { it.id == agentId }?.name ?: agentId
+                listOfNotNull(model.ifBlank { null }, name).joinToString(" · ").ifBlank { null }
+            }
+        }
     }
 
-    private fun refreshAgentChip() {
-        if (hostAgents.isEmpty()) return
-        val agentId = profile?.aiAgent.orEmpty()
-        val name = hostAgents.firstOrNull { it.id == agentId }?.name
-            ?: hostAgents.firstOrNull { it.isDefault }?.name
-            ?: agentId.ifBlank { getString(R.string.agent_fallback) }
-        val model = profile?.effectiveModel().orEmpty()
-        binding.toolbar.subtitle =
-            if (model.isBlank()) name else "$model · $name"
-    }
+    private fun refreshAgentChip() = refreshModelChip()
 
     /** Pull the host's model/agent lists (list_models/list_agents). */
     private fun refreshHostAi() {
@@ -621,7 +640,10 @@ class ChatActivity : AppCompatActivity() {
     private fun switchHost(profileId: String) {
         ProfileStore.setActive(this, profileId)
         profile = ProfileStore.active(this)
-        AgentService.stop(this)
+        // One RESTART instead of stop()+start(): the two separate commands
+        // raced (stopSelf() from the first could tear down the service the
+        // second one was about to use).
+        AgentService.restartIfRunning(this)
         searchQuery = ""
         binding.drawerSearch.setText("")
         loadChat(null)
@@ -891,15 +913,12 @@ class ChatActivity : AppCompatActivity() {
      * per call, so a partially-granted set degrades gracefully.
      */
     private fun startServiceAfterPermissions() {
-        val missing = MainActivity.PERMISSIONS.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isEmpty()) {
+        if (pendingServiceStart) return // dialog already up (onResume re-entry)
+        if (AgentPermissions.requestIfNeeded(this, REQUEST_CODE_PERMS)) {
+            pendingServiceStart = true
+        } else {
             AgentService.start(this)
-            return
         }
-        pendingServiceStart = true
-        ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_PERMS)
     }
 
     override fun onRequestPermissionsResult(
@@ -1091,13 +1110,14 @@ class ChatActivity : AppCompatActivity() {
         val text = input.text?.toString()?.trim().orEmpty()
         if (busy) return
         if (text.isEmpty() && pendingAttachments.isEmpty()) return
-        skipTypewriter()
-        input.setText("")
-
+        // Checked before the composer is cleared: a config error used to eat
+        // the typed text.
         aiConfigErrorOrNull()?.let {
-            appendMessage(ChatMessage("error", it))
+            snack(it)
             return
         }
+        skipTypewriter()
+        input.setText("")
 
         val attachments = pendingAttachments.toList()
         clearPendingAttachmentChips()
@@ -1117,60 +1137,151 @@ class ChatActivity : AppCompatActivity() {
     private fun aiConfigErrorOrNull(): String? {
         val active = profile ?: return getString(R.string.not_connected)
         if (AgentHolder.agent == null) return getString(R.string.not_connected)
-        val useAgent = active.aiAgent.isNotBlank()
-        return if (!useAgent && (active.effectiveModel().isBlank() || active.aiApiKeyEnv.isBlank())) {
+        // Agent mode needs nothing local; model mode needs a model (or an ai
+        // profile) — the key lives on the host.
+        return if (!active.usesAgent && active.aiAgent.isBlank() && active.effectiveModel().isBlank()) {
             getString(R.string.ai_not_configured)
         } else {
             null
         }
     }
 
+    /** What one host round-trip produced. */
+    private sealed interface Reply {
+        data class Text(val content: String) : Reply
+        data class Confirm(val goalId: String, val tool: String) : Reply
+        data class Error(val message: String) : Reply
+    }
+
+    /**
+     * Bumped per request: a reply whose sequence is stale (the user hit Stop
+     * and sent again) is dropped instead of landing in the new exchange and
+     * resetting its busy state.
+     */
+    private var requestSeq = 0
+
     private fun requestCompletion() {
         if (busy) return
         val active = profile ?: return
         val agent = AgentHolder.agent ?: return
+        val target = chat
+        runRequest(active.id, target.id) {
+            if (active.usesAgent) askAgent(agent, active, target) else askModel(agent, active, target)
+        }
+    }
 
+    /**
+     * Runs [call] off the main thread under the busy UI and delivers its
+     * reply to chat [chatId] — which need not be the open one any more.
+     */
+    private fun runRequest(profileId: String, chatId: String, call: () -> Reply) {
+        val seq = ++requestSeq
         busy = true
         generationAborted = false
         setBusyUi(true)
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                // R-05: send a bounded history window — a long chat must not
-                // blow the frame payload budget with every message.
-                val history = chat.messages.takeLast(HISTORY_WINDOW)
-                    .map { it.role to it.content }
-                val contextBlock = buildContextBlock(active.id)
-                val messages = if (contextBlock != null) {
-                    listOf("system" to contextBlock) + history
-                } else {
-                    history
+            val reply = withContext(Dispatchers.IO) {
+                runCatching(call).getOrElse { e ->
+                    Reply.Error(e.message ?: getString(R.string.ai_error))
                 }
-                runCatching { AiClient.chat(agent, active, messages) }
             }
-            if (generationAborted) {
-                // User stopped waiting; the answer is dropped on the floor.
-                busy = false
-                setBusyUi(false)
-                return@launch
-            }
-            result.onSuccess { reply ->
-                val replyMessage = ChatMessage("assistant", reply.content)
-                appendMessage(replyMessage)
-                typewriterReveal(replyMessage)
-            }.onFailure { e ->
-                val message = when (e) {
-                    is AiException -> e.message ?: getString(R.string.ai_error)
-                    else -> e.message ?: getString(R.string.ai_error)
-                }
-                appendMessage(ChatMessage("error", message))
-                dev.vynkor.agent.agent.EventLog.push(
-                    "ai",
-                    "completion failed: $message",
-                )
-            }
+            if (seq != requestSeq || generationAborted) return@launch // Stop: UI already reset
             busy = false
             setBusyUi(false)
+            when (reply) {
+                is Reply.Text -> deliver(profileId, chatId, ChatMessage("assistant", reply.content))
+                is Reply.Error -> {
+                    deliver(profileId, chatId, ChatMessage("error", reply.message))
+                    dev.vynkor.agent.agent.EventLog.push("ai", "completion failed: ${reply.message}")
+                }
+                is Reply.Confirm -> confirmAgentTool(profileId, chatId, reply)
+            }
         }
+    }
+
+    /** Model route: bare ai.chat_completion over the bounded history. */
+    private fun askModel(agent: dev.vynkor.agent.Agent, active: HostProfile, target: Chat): Reply {
+        // R-05: bounded history window. Only roles the API accepts — local
+        // "error" bubbles used to be sent and made the provider reject the
+        // whole request.
+        val history = conversation(target).takeLast(HISTORY_WINDOW)
+            .map { it.role to it.content.ifBlank { ATTACHMENT_ONLY } }
+        val contextBlock = buildContextBlock(active.id, target)
+        val messages = if (contextBlock != null) listOf("system" to contextBlock) + history else history
+        val reply = AiClient.chat(agent, active, messages, hostModels.map { it.id }.toSet())
+        return Reply.Text(reply.content)
+    }
+
+    /** Agent route: the last user turn is the goal, the rest is context. */
+    private fun askAgent(agent: dev.vynkor.agent.Agent, active: HostProfile, target: Chat): Reply {
+        val turns = conversation(target)
+        val lastUser = turns.indexOfLast { it.role == "user" }
+        val goal = turns.getOrNull(lastUser)?.content?.ifBlank { ATTACHMENT_ONLY } ?: return Reply.Error(getString(R.string.agent_goal_empty))
+        val prior = turns.take(maxOf(lastUser, 0)).takeLast(HISTORY_WINDOW)
+            .joinToString("\n") { "${if (it.role == "user") "User" else "Assistant"}: ${it.content}" }
+        val context = listOfNotNull(
+            buildContextBlock(active.id, target),
+            prior.ifBlank { null }?.let { "Conversation so far:\n$it" },
+        ).joinToString("\n\n").ifBlank { null }
+        return goalReply(AiClient.goalStart(agent, active, goal, context, target.title))
+    }
+
+    private fun goalReply(outcome: dev.vynkor.agent.agent.GoalOutcome): Reply = when (outcome) {
+        is dev.vynkor.agent.agent.GoalOutcome.Answer ->
+            if (outcome.text.isBlank()) Reply.Error(getString(R.string.agent_goal_empty))
+            else Reply.Text(outcome.text)
+        is dev.vynkor.agent.agent.GoalOutcome.NeedsConfirmation -> Reply.Confirm(outcome.goalId, outcome.tool)
+        is dev.vynkor.agent.agent.GoalOutcome.Declined ->
+            Reply.Text(getString(R.string.agent_goal_declined, outcome.detail))
+        is dev.vynkor.agent.agent.GoalOutcome.Failed ->
+            if (outcome.status == "max_steps_reached" && outcome.detail.isBlank()) {
+                Reply.Error(getString(R.string.agent_goal_max_steps))
+            } else if (outcome.status == "max_steps_reached") {
+                Reply.Text(outcome.detail)
+            } else {
+                Reply.Error(getString(R.string.agent_goal_failed, outcome.detail.ifBlank { outcome.status }))
+            }
+    }
+
+    /** The agent halted before a tool marked requires_confirmation. */
+    private fun confirmAgentTool(profileId: String, chatId: String, pending: Reply.Confirm) {
+        if (isFinishing || isDestroyed) return
+        fun resume(approve: Boolean) {
+            val agent = AgentHolder.agent ?: run { snack(getString(R.string.not_connected)); return }
+            runRequest(profileId, chatId) {
+                goalReply(AiClient.goalResume(agent, pending.goalId, approve))
+            }
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.agent_confirm_title)
+            .setMessage(getString(R.string.agent_confirm_message, pending.tool))
+            .setCancelable(false)
+            .setPositiveButton(R.string.agent_confirm_allow) { _, _ -> resume(true) }
+            .setNegativeButton(R.string.agent_confirm_deny) { _, _ -> resume(false) }
+            .show()
+    }
+
+    /** user/assistant turns only — local error bubbles never go to the host. */
+    private fun conversation(target: Chat): List<ChatMessage> =
+        target.messages.filter { it.role == "user" || it.role == "assistant" }
+
+    /**
+     * Appends a reply to the chat it belongs to. When the user switched chats
+     * meanwhile it is saved into that chat instead of the one now open.
+     */
+    private fun deliver(profileId: String, chatId: String, message: ChatMessage) {
+        if (profile?.id == profileId && chat.id == chatId) {
+            appendMessage(message)
+            typewriterReveal(message)
+            return
+        }
+        val stored = ChatStore.load(this, profileId, chatId) ?: return
+        ChatStore.save(
+            this,
+            profileId,
+            stored.copy(messages = stored.messages + message, updatedAt = System.currentTimeMillis()),
+        )
+        refreshChatList()
     }
 
     /**
@@ -1188,7 +1299,7 @@ class ChatActivity : AppCompatActivity() {
     }
 
     /** System-role block: project name + project files + last user attachments. */
-    private fun buildContextBlock(profileId: String): String? {
+    private fun buildContextBlock(profileId: String, chat: Chat): String? {
         val projectId = chat.projectId.takeIf { it.isNotBlank() }
         val sources = mutableListOf<AiContext.Source>()
         sources += ProjectFilesStore.contextSources(this, profileId, projectId)
@@ -1359,7 +1470,7 @@ class ChatActivity : AppCompatActivity() {
                 android.content.res.ColorStateList.valueOf(
                     com.google.android.material.color.MaterialColors.getColor(
                         binding.composerCard,
-                        com.google.android.material.R.attr.colorError,
+                        androidx.appcompat.R.attr.colorError,
                     ),
                 )
             action.contentDescription = getString(R.string.stop_button)
@@ -1372,7 +1483,7 @@ class ChatActivity : AppCompatActivity() {
                 android.content.res.ColorStateList.valueOf(
                     com.google.android.material.color.MaterialColors.getColor(
                         binding.composerCard,
-                        com.google.android.material.R.attr.colorPrimary,
+                        androidx.appcompat.R.attr.colorPrimary,
                     ),
                 )
             action.contentDescription = getString(R.string.send_button)
@@ -1384,7 +1495,7 @@ class ChatActivity : AppCompatActivity() {
                 action.iconTint = android.content.res.ColorStateList.valueOf(
                     com.google.android.material.color.MaterialColors.getColor(
                         action,
-                        com.google.android.material.R.attr.colorPrimary,
+                        androidx.appcompat.R.attr.colorPrimary,
                     ),
                 )
             }
@@ -1395,21 +1506,27 @@ class ChatActivity : AppCompatActivity() {
 
     // ----------------------------------------------------- model switcher
 
+    /**
+     * Where messages go: the first entry is the host agent plugin (tools,
+     * planning); the rest are bare ai-plugin models.
+     */
     private fun showModelPicker() {
         val active = profile ?: return
         val models = hostModels.map { it.id }
             .ifEmpty { AiPresets.modelsFor(active.aiProvider) }
             .ifEmpty { listOf(active.effectiveModel()) }
-        val labels = models + getString(R.string.custom_model)
-        val current = active.effectiveModel()
+            .filter { it.isNotBlank() }
+        val agentLabel = "${getString(R.string.chat_target_agent)} — ${getString(R.string.chat_target_agent_hint)}"
+        val labels = listOf(agentLabel) + models + getString(R.string.custom_model)
+        val checked = if (active.usesAgent) 0 else models.indexOf(active.effectiveModel()).let { if (it < 0) -1 else it + 1 }
         MaterialAlertDialogBuilder(this)
             .setTitle(R.string.model_picker_title)
-            .setSingleChoiceItems(labels.toTypedArray(), models.indexOf(current)) { dialog, which ->
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { dialog, which ->
                 dialog.dismiss()
-                if (which < models.size) {
-                    saveModel(models[which])
-                } else {
-                    customModelDialog()
+                when {
+                    which == 0 -> saveTarget(HostProfile.CHAT_TARGET_AGENT, null)
+                    which <= models.size -> saveModel(models[which - 1])
+                    else -> customModelDialog()
                 }
             }
             .show()
@@ -1439,12 +1556,17 @@ class ChatActivity : AppCompatActivity() {
 
     private fun saveModel(modelId: String) {
         if (modelId.isBlank()) return
+        saveTarget(HostProfile.CHAT_TARGET_AI, modelId)
+    }
+
+    private fun saveTarget(target: String, modelId: String?) {
         val active = profile ?: return
-        val updated = active.copy(aiModel = modelId)
+        val updated = active.copy(chatTarget = target, aiModel = modelId ?: active.aiModel)
         profile = updated
         ProfileStore.save(this, updated)
         refreshModelChip()
-        Toast.makeText(this, getString(R.string.model_switched, modelId), Toast.LENGTH_SHORT).show()
+        val label = if (target == HostProfile.CHAT_TARGET_AGENT) getString(R.string.chat_target_agent) else modelId.orEmpty()
+        Toast.makeText(this, getString(R.string.model_switched, label), Toast.LENGTH_SHORT).show()
     }
 
     // ------------------------------------------------------- message actions
@@ -1511,8 +1633,18 @@ class ChatActivity : AppCompatActivity() {
         val active = profile ?: return
         val idx = chat.messages.indexOfFirst { it.id == message.id }
         if (idx < 0) return
+        // Attachments live under the owning chat's id — copy them over, or
+        // the fork shows bubbles whose files it can never open.
+        val branchId = java.util.UUID.randomUUID().toString()
+        val messages = chat.messages.take(idx + 1).map { msg ->
+            msg.copy(attachments = msg.attachments.mapNotNull { att ->
+                val from = AttachmentStore.fileFor(this, chat.id, att)
+                val to = AttachmentStore.fileFor(this, branchId, att)
+                runCatching { from.copyTo(to, overwrite = true) }.getOrNull()?.let { att }
+            })
+        }
         val branch = ChatStore.autoTitle(
-            Chat(messages = chat.messages.take(idx + 1)),
+            Chat(id = branchId, messages = messages, projectId = chat.projectId),
         )
         ChatStore.save(this, active.id, branch)
         loadChat(branch)
@@ -1789,6 +1921,9 @@ class ChatActivity : AppCompatActivity() {
 
         /** Hard cap on one local dictation session (R-11 memory fuse). */
         private const val MAX_DICTATION_MS = 5 * 60_000L
+
+        /** Stand-in text for a turn that carried only attachments. */
+        private const val ATTACHMENT_ONLY = "(see attached files)"
 
         /** History window sent to the host AI per message (R-05 payload budget). */
         private const val HISTORY_WINDOW = 20

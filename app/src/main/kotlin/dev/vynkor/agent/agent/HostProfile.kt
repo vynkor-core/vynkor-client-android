@@ -27,7 +27,15 @@ data class HostProfile(
     val aiApiKeyEnv: String = "",
     /** Selected agent profile id on the host ('' = host default agent). */
     val aiAgent: String = "",
+    /**
+     * Where chat messages go: [CHAT_TARGET_AGENT] = the host `agent` plugin
+     * (goal loop with tools), [CHAT_TARGET_AI] = a bare `ai.chat_completion`
+     * with [aiModel]. The agent is the default.
+     */
+    val chatTarget: String = CHAT_TARGET_AGENT,
 ) {
+    val usesAgent: Boolean get() = chatTarget != CHAT_TARGET_AI
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("name", name)
@@ -42,6 +50,7 @@ data class HostProfile(
         put("ai_base_url", aiBaseUrl)
         put("ai_api_key_env", aiApiKeyEnv)
         put("ai_agent", aiAgent)
+        put("chat_target", chatTarget)
     }
 
     fun effectiveModel(): String =
@@ -53,6 +62,9 @@ data class HostProfile(
     fun effectiveBaseUrl(): String = aiBaseUrl
 
     companion object {
+        const val CHAT_TARGET_AGENT = "agent"
+        const val CHAT_TARGET_AI = "ai"
+
         val DEFAULT_MODEL_BY_PROVIDER: Map<String, String> = mapOf(
             "openai" to "llama3.2",
             "anthropic" to "claude-sonnet-4-5",
@@ -77,6 +89,7 @@ data class HostProfile(
             aiBaseUrl = o.optString("ai_base_url"),
             aiApiKeyEnv = o.optString("ai_api_key_env"),
             aiAgent = o.optString("ai_agent"),
+            chatTarget = o.optString("chat_target").ifBlank { CHAT_TARGET_AGENT },
         )
     }
 }

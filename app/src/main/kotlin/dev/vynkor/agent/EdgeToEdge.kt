@@ -25,3 +25,7 @@ fun AppCompatActivity.applyInsetPadding() {
 fun AppCompatActivity.snack(messageRes: Int, duration: Int = Snackbar.LENGTH_SHORT) {
     Snackbar.make(findViewById(android.R.id.content), messageRes, duration).show()
 }
+
+fun AppCompatActivity.snack(message: String, duration: Int = Snackbar.LENGTH_LONG) {
+    Snackbar.make(findViewById(android.R.id.content), message, duration).show()
+}

@@ -11,7 +11,6 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -21,6 +20,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.vynkor.agent.agent.AgentHolder
+import dev.vynkor.agent.agent.AgentPermissions
 import dev.vynkor.agent.agent.AgentService
 import dev.vynkor.agent.agent.DeviceIdentity
 import dev.vynkor.agent.agent.HostProfile
@@ -88,7 +88,10 @@ class HostsActivity : AppCompatActivity() {
 
         adapter = ProfileAdapter(
             onSelect = { profile ->
-                ProfileStore.setActive(this, profile.id)
+                if (ProfileStore.active(this)?.id != profile.id) {
+                    ProfileStore.setActive(this, profile.id)
+                    AgentService.restartIfRunning(this)
+                }
                 refresh()
             },
             onEdit = { profile ->
@@ -98,7 +101,9 @@ class HostsActivity : AppCompatActivity() {
                 )
             },
             onDelete = { profile ->
+                val wasActive = ProfileStore.active(this)?.id == profile.id
                 ProfileStore.delete(this, profile.id)
+                if (wasActive) AgentService.restartIfRunning(this)
                 refresh()
             },
         )
@@ -124,6 +129,13 @@ class HostsActivity : AppCompatActivity() {
         if (!raw.startsWith("${PairingPayload.SCHEME}://")) return
         i.data = null // re-delivery guard: apply once per intent
         onPairingPayload(raw, external = true)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Exported for vynkor://pair links, and it lists host credentials —
+        // the app lock must hold here too, not only on the chat screen.
+        applyBiometricGate()
     }
 
     override fun onResume() {
@@ -153,8 +165,12 @@ class HostsActivity : AppCompatActivity() {
                 getString(R.string.paired_and_connected, applied.name),
                 Toast.LENGTH_SHORT,
             ).show()
+            // A running agent is still bound to the previous credentials;
+            // without a restart the new pairing never took effect.
             if (AgentHolder.agent == null) {
                 startServiceAfterPermissions()
+            } else {
+                AgentService.restartIfRunning(this)
             }
         }) {
             is PairingApplier.Decision.Applied -> Unit
@@ -171,15 +187,11 @@ class HostsActivity : AppCompatActivity() {
      * resolved (not fire-and-forget alongside it).
      */
     private fun startServiceAfterPermissions() {
-        val missing = MainActivity.PERMISSIONS.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isEmpty()) {
+        if (AgentPermissions.requestIfNeeded(this, REQUEST_CODE_PERMS)) {
+            pendingServiceStart = true
+        } else {
             AgentService.start(this)
-            return
         }
-        pendingServiceStart = true
-        ActivityCompat.requestPermissions(this, missing.toTypedArray(), REQUEST_CODE_PERMS)
     }
 
     override fun onRequestPermissionsResult(

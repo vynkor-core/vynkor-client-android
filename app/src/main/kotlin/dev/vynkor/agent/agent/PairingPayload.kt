@@ -76,15 +76,25 @@ object PairingPayload {
     /** zlib (RFC 1950) inflate — matches the host CLI's ZlibEncoder output. */
     private fun inflate(data: ByteArray): String? {
         val inflater = Inflater()
-        inflater.setInput(data)
-        val out = java.io.ByteArrayOutputStream()
-        val buf = ByteArray(4096)
-        while (!inflater.finished()) {
-            val n = inflater.inflate(buf)
-            if (n == 0 && inflater.needsInput()) return null
-            out.write(buf, 0, n)
+        try {
+            inflater.setInput(data)
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            while (!inflater.finished()) {
+                val n = inflater.inflate(buf)
+                // Truncated input, or a preset-dictionary stream we never
+                // supply: either would spin here forever.
+                if (n == 0 && (inflater.needsInput() || inflater.needsDictionary())) return null
+                out.write(buf, 0, n)
+                if (out.size() > MAX_INFLATED_BYTES) return null
+            }
+            return out.toString("UTF-8")
+        } finally {
+            // Native zlib state — released on every path, not only success.
+            inflater.end()
         }
-        inflater.end()
-        return out.toString("UTF-8")
     }
+
+    /** A pairing payload is a few KiB; anything past this is a zip bomb. */
+    private const val MAX_INFLATED_BYTES = 256 * 1024
 }

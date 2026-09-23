@@ -169,7 +169,7 @@ class ChatAdapter(
                     val activeTint = if (isSpeaking) {
                         com.google.android.material.color.MaterialColors.getColor(
                             itemView,
-                            com.google.android.material.R.attr.colorPrimary,
+                            androidx.appcompat.R.attr.colorPrimary,
                         )
                     } else {
                         tint

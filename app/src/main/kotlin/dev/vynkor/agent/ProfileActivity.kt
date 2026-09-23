@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.textfield.TextInputEditText
+import dev.vynkor.agent.agent.AgentService
 import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.databinding.ActivityProfileBinding
 import dev.vynkor.agent.agent.DeviceIdentity
@@ -47,23 +48,17 @@ class ProfileActivity : AppCompatActivity() {
         }
 
         binding.save.setOnClickListener {
-            val profile = HostProfile(
-                id = editing?.id ?: java.util.UUID.randomUUID().toString(),
+            // copy() keeps every field this form does not show — the pinned
+            // TLS cert above all: rebuilding the profile field by field
+            // dropped cert_pem, and a wss:// host stopped verifying after any
+            // edit. AI/chat choices are made in the chat's model picker.
+            val profile = (editing ?: HostProfile()).copy(
                 name = name.text?.toString()?.trim().orEmpty(),
                 hostUrl = hostUrl.text?.toString()?.trim().orEmpty(),
                 deviceId = deviceId.text?.toString()?.trim().orEmpty(),
                 jwtToken = jwt.text?.toString()?.trim().orEmpty(),
                 deviceSecret = secret.text?.toString()?.trim().orEmpty(),
                 userId = userId.text?.toString()?.trim().orEmpty().ifBlank { "default" },
-                // AI settings are no longer configured by hand: the host's `ai`
-                // plugin is expected to declare its available models (see
-                // docs/D14_AI_CHAT_AND_SETTINGS.md). Keep stored values when
-                // editing so existing profiles are preserved.
-                aiProvider = editing?.aiProvider ?: "openai",
-                aiModel = editing?.aiModel.orEmpty(),
-                aiBaseUrl = editing?.aiBaseUrl?.ifBlank { DEFAULT_AI_BASE_URL } ?: DEFAULT_AI_BASE_URL,
-                aiApiKeyEnv = editing?.aiApiKeyEnv?.ifBlank { DEFAULT_AI_API_KEY_ENV } ?: DEFAULT_AI_API_KEY_ENV,
-                aiAgent = editing?.aiAgent.orEmpty(),
             )
             if (profile.hostUrl.isBlank()) {
                 snack(R.string.host_url_required)
@@ -72,13 +67,12 @@ class ProfileActivity : AppCompatActivity() {
             DeviceIdentity.setDeviceId(this, profile.deviceId)
             ProfileStore.save(this, profile)
             ProfileStore.setActive(this, profile.id)
+            AgentService.restartIfRunning(this)
             finish()
         }
     }
 
     companion object {
         const val EXTRA_PROFILE_ID = "profile_id"
-        private const val DEFAULT_AI_BASE_URL = "http://localhost:11434/v1"
-        private const val DEFAULT_AI_API_KEY_ENV = "OLLAMA_API_KEY"
     }
 }

@@ -1,8 +1,12 @@
 package dev.vynkor.agent.caps
 
+import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -10,7 +14,29 @@ import dev.vynkor.agent.Agent
 import dev.vynkor.agent.SpeakerSink
 import java.util.concurrent.atomic.AtomicLong
 
-class SpeakerSinkImpl : SpeakerSink {
+/**
+ * Host TTS → phone speaker. Rust fills a PCM ring; this worker drains it into
+ * one AudioTrack. Audio focus is transient and per utterance
+ * (GAIN_TRANSIENT_MAY_DUCK): the user's music ducks while the host speaks and
+ * comes back afterwards, instead of being paused for as long as the agent
+ * service runs.
+ */
+class SpeakerSinkImpl(context: Context) : SpeakerSink {
+    private val audioManager = context.getSystemService(AudioManager::class.java)
+    private val speechAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+    private val focusRequest: AudioFocusRequest? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(speechAttributes)
+                .setOnAudioFocusChangeListener { }
+                .build()
+        } else {
+            null
+        }
+
     @Volatile
     private var released = false
 
@@ -35,7 +61,8 @@ class SpeakerSinkImpl : SpeakerSink {
     override fun appendPcm(pcm: ByteArray, endOfStream: Boolean) {
         val ag = agentRef
         if (ag != null) {
-            ag.speakerPushPcm(pcm, 24000u, endOfStream)
+            // 0 = keep the stream's current rate (set by the host's chunks).
+            ag.speakerPushPcm(pcm, 0u, endOfStream)
             return
         }
         Log.w(TAG, "appendPcm without agent, dropping ${pcm.size}")
@@ -49,6 +76,7 @@ class SpeakerSinkImpl : SpeakerSink {
         released = true
         workerHandler.removeCallbacksAndMessages(null)
         workerHandler.post {
+            abandonFocus()
             try { track?.stop() } catch (_: IllegalStateException) {}
             try { track?.release() } catch (_: IllegalStateException) {}
             track = null
@@ -73,9 +101,13 @@ class SpeakerSinkImpl : SpeakerSink {
             if (!playing) {
                 val shouldStart = pending >= PREFILL_BYTES.toULong() || (ag.speakerEosGet() && pending > 0uL)
                 if (!shouldStart) {
-                    try { Thread.sleep(IDLE_SLEEP_MS) } catch (_: InterruptedException) { break }
+                    // Nothing buffered: poll slowly. The old 10 ms tick woke
+                    // the CPU 100×/s for the whole service lifetime.
+                    val nap = if (pending == 0uL) IDLE_EMPTY_SLEEP_MS else IDLE_SLEEP_MS
+                    try { Thread.sleep(nap) } catch (_: InterruptedException) { break }
                     continue
                 }
+                requestFocus()
                 try {
                     t.play()
                 } catch (e: IllegalStateException) {
@@ -102,6 +134,7 @@ class SpeakerSinkImpl : SpeakerSink {
                         playing = false
                         bytesWritten = 0L
                         try { ag.speakerClear() } catch (_: Exception) {}
+                        abandonFocus()
                         continue
                     }
                 }
@@ -115,7 +148,26 @@ class SpeakerSinkImpl : SpeakerSink {
                 off += w
             }
             bytesWritten += chunk.size
-            Log.i(TAG, "rtrb wrote ${chunk.size} pending=${ag.speakerPendingBytesGet()} eos=${ag.speakerEosGet()}")
+        }
+    }
+
+    private fun requestFocus() {
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { am.requestAudioFocus(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        }
+    }
+
+    private fun abandonFocus() {
+        val am = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { am.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            am.abandonAudioFocus(null)
         }
     }
 
@@ -153,7 +205,7 @@ class SpeakerSinkImpl : SpeakerSink {
         val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val bufSize = maxOf(minBuf * 4, PREFILL_BYTES * 2 + 8192)
         val t = AudioTrack.Builder()
-            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioAttributes(speechAttributes)
             .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setBufferSizeInBytes(bufSize)
@@ -172,5 +224,6 @@ class SpeakerSinkImpl : SpeakerSink {
         private const val PREFILL_BYTES = 24_000 * 2 * 2
         private const val MIN_WRITE_BYTES = 8192
         private const val IDLE_SLEEP_MS = 10L
+        private const val IDLE_EMPTY_SLEEP_MS = 100L
     }
 }

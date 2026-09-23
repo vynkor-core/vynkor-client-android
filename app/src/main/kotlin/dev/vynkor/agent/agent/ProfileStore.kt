@@ -27,6 +27,17 @@ object ProfileStore {
     private const val KEY_JWT = "jwt_token"
     private const val KEY_SECRET = "jwt_secret"
 
+    /**
+     * Decrypted profile list, tied to the prefs instance it was read from.
+     * Every active()/list() used to run a Keystore AES-GCM decrypt — on the
+     * UI thread, several times per screen. Also what keeps a change alive
+     * "memory-only" when encryption is unavailable (see [persist]).
+     */
+    private class Cached(val prefs: SharedPreferences, val list: List<HostProfile>)
+
+    @Volatile
+    private var cached: Cached? = null
+
     fun list(context: Context): List<HostProfile> = load(context)
 
     fun get(context: Context, id: String): HostProfile? =
@@ -77,6 +88,11 @@ object ProfileStore {
 
     private fun load(context: Context): MutableList<HostProfile> {
         val p = prefs(context)
+        cached?.takeIf { it.prefs === p }?.let { return it.list.toMutableList() }
+        return loadFromDisk(context, p).also { cached = Cached(p, it.toList()) }
+    }
+
+    private fun loadFromDisk(context: Context, p: SharedPreferences): MutableList<HostProfile> {
 
         p.getString(KEY_PROFILES_ENC, null)?.let { enc ->
             val json = ProfileCrypto.decrypt(enc)
@@ -122,6 +138,7 @@ object ProfileStore {
      * on disk.
      */
     private fun persist(context: Context, list: List<HostProfile>) {
+        cached = Cached(prefs(context), list.toList())
         val arr = JSONArray()
         list.forEach { arr.put(it.toJson()) }
         val enc = ProfileCrypto.encrypt(arr.toString())

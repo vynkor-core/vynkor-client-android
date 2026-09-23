@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import dev.vynkor.agent.Agent
 import dev.vynkor.agent.AgentConfig
 import dev.vynkor.agent.AgentObserver
@@ -34,10 +35,9 @@ import dev.vynkor.agent.caps.RingerProviderImpl
 import dev.vynkor.agent.caps.SmsProviderImpl
 import dev.vynkor.agent.caps.SpeakerSinkImpl
 import dev.vynkor.agent.caps.WifiProviderImpl
+import android.content.pm.ServiceInfo
+import androidx.core.app.ServiceCompat
 import java.util.concurrent.Executors
-import android.media.AudioManager
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 
 /** Foreground service holding the agent connection. One per active host. */
 class AgentService : Service() {
@@ -50,10 +50,6 @@ class AgentService : Service() {
     private var batteryEvents: BatteryEventSource? = null
     private val cleanupExecutor =
         Executors.newSingleThreadExecutor { r -> Thread(r, "vynkor-agent-cleanup") }
-    private var focusRequest: AudioFocusRequest? = null
-    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        Log.i("AgentService", "audio focus change: $change")
-    }
 
     /** Live line shown in the foreground notification (updated by observer). */
     @Volatile
@@ -65,41 +61,34 @@ class AgentService : Service() {
         super.onCreate()
         current = this
         createChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
-        requestMediaAudioFocus()
-    }
-
-    private fun requestMediaAudioFocus() {
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val attrs = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_MEDIA)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-            .build()
-        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-            .setAudioAttributes(attrs)
-            .setOnAudioFocusChangeListener(focusListener)
-            .setAcceptsDelayedFocusGain(true)
-            .setWillPauseWhenDucked(false)
-            .build()
-        val result = am.requestAudioFocus(req)
-        focusRequest = req
-        Log.i("AgentService", "requestAudioFocus result=$result")
-    }
-
-    private fun abandonMediaAudioFocus() {
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        focusRequest?.let {
-            am.abandonAudioFocusRequest(it)
-            Log.i("AgentService", "abandonAudioFocusRequest")
-        }
-        focusRequest = null
+        // Explicit types (API 29+): connectedDevice for the host link,
+        // mediaPlayback for host TTS on the speaker. Audio focus is NOT taken
+        // here — holding it for the service lifetime paused the user's music
+        // whenever the agent ran; SpeakerSinkImpl takes transient focus per
+        // utterance instead.
+        ServiceCompat.startForeground(
+            this,
+            NOTIFICATION_ID,
+            buildNotification(),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            } else {
+                0
+            },
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopAgent()
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ACTION_STOP -> {
+                stopAgent()
+                stopSelf()
+                return START_NOT_STICKY
+            }
+            // Active profile changed (pairing, host switch, edit, delete):
+            // the running agent is bound to the old credentials.
+            ACTION_RESTART -> stopAgent()
         }
         startAgent()
         return START_STICKY
@@ -118,7 +107,7 @@ class AgentService : Service() {
             jwtToken = profile.jwtToken,
             deviceSecret = profile.deviceSecret,
             certPem = profile.certPem,
-            deviceId = profile.deviceId,
+            deviceId = profile.deviceId.ifBlank { DeviceIdentity.deviceId(this) },
             capabilities = listOf(
                 "geo", "battery", "notifications", "clipboard", "contacts", "mic", "speaker", "chat",
                 "device", "wifi", "bluetooth", "dnd", "ringer", "brightness",
@@ -129,17 +118,11 @@ class AgentService : Service() {
             userId = profile.userId.ifBlank { "default" },
         )
         val a = Agent(config)
-        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        am.mode = AudioManager.MODE_NORMAL
-        am.isSpeakerphoneOn = true
-        am.isMicrophoneMute = false
-        val initial = am.getStreamVolume(AudioManager.STREAM_MUSIC)
-        Log.i("AgentService", "audio mode=NORMAL stream_music_vol=$initial max=${am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)} speakerphone=${am.isSpeakerphoneOn}")
         a.setBattery(BatteryProviderImpl(this))
         a.setLocation(LocationProviderImpl(this))
         a.setClipboard(ClipboardProviderImpl(this))
         a.setContacts(ContactsProviderImpl(this))
-        val speaker = SpeakerSinkImpl()
+        val speaker = SpeakerSinkImpl(this)
         a.setSpeaker(speaker)
         sink = speaker
         speaker.attachAgent(a)
@@ -182,9 +165,11 @@ class AgentService : Service() {
                         // Meaningful only while nothing is live; otherwise the
                         // UI already shows Connected/Reconnecting.
                         if (!AgentHolder.connectionState.value) {
-                            AgentHolder.hostStatus.value =
-                                HostStatus.Unreachable(status.reason)
+                            val reason = unreachableReason(status.reason)
+                            AgentHolder.hostStatus.value = HostStatus.Unreachable(reason)
                             EventLog.push("agent", "unreachable: ${status.reason}")
+                            connectionLine = getString(R.string.service_unreachable, reason)
+                            updateNotification()
                         }
                 }
             }
@@ -203,8 +188,24 @@ class AgentService : Service() {
         // session (chat UI long-press on the mic button).
     }
 
+    /**
+     * Android 17 drops LAN traffic of apps without the local-network grant
+     * without an error — the connect merely times out. Name the real cause
+     * instead of a bare timeout.
+     */
+    private fun unreachableReason(raw: String): String =
+        if (!AgentPermissions.hasLocalNetwork(this)) {
+            getString(R.string.local_network_permission_missing)
+        } else {
+            raw
+        }
+
     private fun stopAgent() {
         val stopping = agent
+        // Captured now: startAgent() (RESTART) installs a fresh sink before
+        // the cleanup below runs, and must not have it released.
+        val stoppingSink = sink
+        sink = null
         agent = null
         batteryEvents?.stop()
         batteryEvents = null
@@ -219,8 +220,7 @@ class AgentService : Service() {
         cleanupExecutor.execute {
             try {
                 micSession.stopSession("service stopped")
-                sink?.release()
-                sink = null
+                stoppingSink?.release()
                 stopping?.stop()
             } catch (e: Exception) {
                 Log.w(TAG, "agent cleanup failed", e)
@@ -236,7 +236,6 @@ class AgentService : Service() {
     }
 
     override fun onDestroy() {
-        abandonMediaAudioFocus()
         current = null
         stopAgent()
         super.onDestroy()
@@ -316,20 +315,30 @@ class AgentService : Service() {
         }
         private const val NOTIFICATION_ID = 1
         private const val ACTION_STOP = "dev.vynkor.agent.STOP"
+        private const val ACTION_RESTART = "dev.vynkor.agent.RESTART"
 
         fun start(context: Context) {
-        EventLog.push("service", "start requested")
-            val intent = Intent(context, AgentService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            EventLog.push("service", "start requested")
+            ContextCompat.startForegroundService(context, Intent(context, AgentService::class.java))
         }
 
         fun stop(context: Context) {
-        EventLog.push("service", "stop")
+            EventLog.push("service", "stop")
             context.startService(Intent(context, AgentService::class.java).setAction(ACTION_STOP))
+        }
+
+        /**
+         * Re-binds a running agent to the current active profile (new pairing,
+         * host switch, edited or deleted profile). No-op while the service is
+         * down — the next start picks the active profile up anyway.
+         */
+        fun restartIfRunning(context: Context) {
+            if (current == null) return
+            EventLog.push("service", "restart requested")
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, AgentService::class.java).setAction(ACTION_RESTART),
+            )
         }
     }
 }
