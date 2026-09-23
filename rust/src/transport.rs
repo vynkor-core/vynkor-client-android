@@ -30,6 +30,13 @@ pub const BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// not wedge the loop forever on `ws.next()`.
 pub const REGISTER_ACK_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Bound on TCP connect + TLS + WS upgrade. Without it an unroutable address
+/// (stale LAN IP, other subnet) or a socket silently blocked by the OS — on
+/// Android 17 a missing local-network grant surfaces as exactly such a hang —
+/// parks the loop for the kernel's full SYN retry budget (~2 min) with no
+/// error for the UI to show.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// Registration parameters for the single device connection.
@@ -91,30 +98,31 @@ impl DeviceConn {
             HeaderValue::from_str(&protocol).map_err(|e| AgentError::Connect(e.to_string()))?;
         req.headers_mut().insert("sec-websocket-protocol", value);
 
-        let (ws, _resp) = if url.scheme() == "wss" {
-            match &params.cert_pem {
-                Some(pem) => {
-                    let connector = tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(
-                        pinned_tls_config(pem)?,
-                    ));
-                    tokio_tungstenite::connect_async_tls_with_config(
-                        req,
-                        None,
-                        false,
-                        Some(connector),
-                    )
-                    .await
-                    .map_err(|e| AgentError::Connect(e.to_string()))?
-                }
-                None => connect_async(req)
-                    .await
-                    .map_err(|e| AgentError::Connect(e.to_string()))?,
-            }
-        } else {
-            connect_async(req)
-                .await
-                .map_err(|e| AgentError::Connect(e.to_string()))?
+        let connector = match (url.scheme(), &params.cert_pem) {
+            ("wss", Some(pem)) => Some(tokio_tungstenite::Connector::Rustls(
+                std::sync::Arc::new(pinned_tls_config(pem)?),
+            )),
+            _ => None,
         };
+        let connect = async {
+            match connector {
+                Some(c) => {
+                    tokio_tungstenite::connect_async_tls_with_config(req, None, false, Some(c))
+                        .await
+                }
+                None => connect_async(req).await,
+            }
+        };
+        let (ws, _resp) = tokio::time::timeout(CONNECT_TIMEOUT, connect)
+            .await
+            .map_err(|_| {
+                AgentError::Connect(format!(
+                    "no answer from {} within {}s",
+                    host_port(&url),
+                    CONNECT_TIMEOUT.as_secs()
+                ))
+            })?
+            .map_err(|e| AgentError::Connect(e.to_string()))?;
 
         let plugin_id = params.plugin_id();
         let caps = params.caps.clone();
@@ -242,23 +250,104 @@ fn arm_from_ack(
     Ok(key)
 }
 
+/// TLS config that trusts exactly the certificate(s) delivered in the
+/// pairing QR. Trust comes from byte-equality with the pinned cert, not from
+/// a CA chain or the hostname: the QR is the trusted channel, and the host's
+/// LAN IP is DHCP-assigned — checking the name made every paired phone fail
+/// ("certificate not valid for name") as soon as the host's address changed.
+/// Handshake signatures are still verified against the pinned key.
 fn pinned_tls_config(pem: &str) -> Result<rustls::ClientConfig, AgentError> {
-    let mut roots = rustls::RootCertStore::empty();
+    let mut pinned = Vec::new();
     let mut reader = std::io::Cursor::new(pem.as_bytes());
     for cert in rustls_pemfile::certs(&mut reader) {
-        let cert = cert.map_err(|e| AgentError::Connect(format!("bad cert pem: {e}")))?;
-        roots
-            .add(cert)
-            .map_err(|e| AgentError::Connect(format!("unusable cert: {e}")))?;
+        pinned.push(cert.map_err(|e| AgentError::Connect(format!("bad cert pem: {e}")))?);
     }
-    if roots.is_empty() {
+    if pinned.is_empty() {
         return Err(AgentError::Connect(
             "cert_pem contained no certificates".into(),
         ));
     }
-    Ok(rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider()));
+    let verifier = PinnedCertVerifier {
+        pinned,
+        provider: provider.clone(),
+    };
+    Ok(rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| AgentError::Connect(format!("tls config: {e}")))?
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(verifier))
         .with_no_client_auth())
+}
+
+#[derive(Debug)]
+struct PinnedCertVerifier {
+    pinned: Vec<rustls::pki_types::CertificateDer<'static>>,
+    provider: std::sync::Arc<rustls::crypto::CryptoProvider>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for PinnedCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        if self.pinned.iter().any(|c| c.as_ref() == end_entity.as_ref()) {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::UnknownIssuer,
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// `host:port` for error messages (never the path/query).
+fn host_port(url: &url::Url) -> String {
+    let host = url.host_str().unwrap_or("?");
+    match url.port_or_known_default() {
+        Some(p) => format!("{host}:{p}"),
+        None => host.to_string(),
+    }
 }
 
 fn resolve_ws_url(raw: &str) -> Result<url::Url, AgentError> {
@@ -310,6 +399,23 @@ yb1Tnq5tizCER4XqSXqd5jIWj06Iijtt3Yo9WbD36qqOiBcU8cxD+LyRxnIGd+Dd
     }
 
     #[test]
+    fn pinned_verifier_accepts_only_the_pinned_cert_under_any_name() {
+        use rustls::client::danger::ServerCertVerifier;
+        let mut reader = std::io::Cursor::new(TEST_CERT_PEM.as_bytes());
+        let cert = rustls_pemfile::certs(&mut reader).next().unwrap().unwrap();
+        let v = PinnedCertVerifier {
+            pinned: vec![cert.clone()],
+            provider: std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+        };
+        let now = rustls::pki_types::UnixTime::now();
+        // A DHCP-changed IP the cert never listed must still verify.
+        let ip = rustls::pki_types::ServerName::try_from("192.168.31.189").unwrap();
+        assert!(v.verify_server_cert(&cert, &[], &ip, &[], now).is_ok());
+        let other = rustls::pki_types::CertificateDer::from(vec![0u8; 16]);
+        assert!(v.verify_server_cert(&other, &[], &ip, &[], now).is_err());
+    }
+
+    #[test]
     fn pinned_tls_rejects_pem_without_certs() {
         let err = pinned_tls_config("not a pem at all").unwrap_err();
         assert!(err.to_string().contains("no certificates"));
@@ -343,6 +449,36 @@ yb1Tnq5tizCER4XqSXqd5jIWj06Iijtt3Yo9WbD36qqOiBcU8cxD+LyRxnIGd+Dd
     fn resolve_wss_keeps_path() {
         let url = resolve_ws_url("wss://host/ws").unwrap();
         assert_eq!(url.as_str(), "wss://host/ws");
+    }
+
+    #[test]
+    fn host_port_uses_scheme_default() {
+        let url = resolve_ws_url("wss://host/ws").unwrap();
+        assert_eq!(host_port(&url), "host:443");
+        let url = resolve_ws_url("ws://10.0.0.2:8888/ws").unwrap();
+        assert_eq!(host_port(&url), "10.0.0.2:8888");
+    }
+
+    /// A blackholed address must fail within CONNECT_TIMEOUT instead of
+    /// hanging for the OS SYN-retry budget. 10.255.255.1 is unroutable in
+    /// practice; either a fast OS error or our timeout is acceptable — only
+    /// a hang past the bound is a failure.
+    #[tokio::test]
+    async fn connect_to_blackhole_is_bounded() {
+        let p = RegisterParams {
+            device_id: "d".into(),
+            caps: vec![],
+            jwt_token: String::new(),
+            device_secret: None,
+            cert_pem: None,
+            os_version: "17".into(),
+            arch: "aarch64".into(),
+            user_id: "default".into(),
+        };
+        let started = std::time::Instant::now();
+        let res = DeviceConn::connect_and_register("ws://10.255.255.1:9/ws", &p).await;
+        assert!(res.is_err());
+        assert!(started.elapsed() < CONNECT_TIMEOUT + Duration::from_secs(2));
     }
 
     #[test]
