@@ -50,6 +50,11 @@ const READ_DEADLINE: Duration = Duration::from_secs(40);
 /// resets the reconnect backoff instead of leaving it parked at the maximum.
 const BACKOFF_RESET_AFTER: Duration = Duration::from_secs(60);
 
+/// stop() waits at most this long for in-flight provider calls (blocking
+/// JVM upcalls) before the runtime is torn down; a wedged provider must not
+/// hang the service's cleanup thread forever.
+const RUNTIME_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
+
 /// Lifecycle state; `is_connected()` is the only part visible to Kotlin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentState {
@@ -179,6 +184,9 @@ impl Agent {
         // start() must always find a sender, or join() would hang forever.
         let (stop_tx, stop_rx) = watch::channel(false);
         *lock(&self.stop_tx) = Some(stop_tx);
+        // Before spawning: the runtime may connect (-> Connected) before this
+        // thread gets to run again, and must not be overwritten with Starting.
+        *lock(&self.state) = AgentState::Starting;
         let me = Arc::clone(&self);
         let handle = std::thread::Builder::new()
             .name("vynkor-agent".into())
@@ -190,10 +198,10 @@ impl Agent {
                     .build()
                     .expect("tokio runtime");
                 rt.block_on(me.run(stop_rx));
+                rt.shutdown_timeout(RUNTIME_SHUTDOWN_GRACE);
             })
             .expect("spawn agent thread");
         *lock(&self.runtime) = Some(handle);
-        *lock(&self.state) = AgentState::Starting;
         self.notify_status(ConnectionStatus::Connecting);
     }
 
@@ -206,6 +214,12 @@ impl Agent {
         if let Some(handle) = lock(&self.runtime).take() {
             let _ = handle.join();
         }
+        // The session task was cancelled with the runtime, so its own
+        // teardown (live counter, cap channels) never ran — do it here, or a
+        // restarted agent reports is_connected() over dead channels.
+        lock(&self.caps).clear();
+        self.live.store(0, Ordering::Relaxed);
+        lock(&self.opus_decoders).clear();
         self.purge_pending();
         *lock(&self.state) = AgentState::Stopped;
     }
@@ -670,15 +684,12 @@ impl Agent {
                 .store(sample_rate, Ordering::Relaxed);
         }
         if len > 0 {
-            let mut prod = self.speaker_ring_prod.lock().unwrap();
-            let mut pushed = 0usize;
-            for b in pcm {
-                if prod.push(b).is_ok() {
-                    pushed += 1;
-                } else {
-                    break;
-                }
-            }
+            let mut prod = lock(&self.speaker_ring_prod);
+            let n = prod.slots().min(pcm.len());
+            let pushed = match prod.write_chunk_uninit(n) {
+                Ok(chunk) => chunk.fill_from_iter(pcm),
+                Err(_) => 0,
+            };
             self.speaker_pending_bytes
                 .fetch_add(pushed, Ordering::Relaxed);
             if pushed as u64 != len {
@@ -698,20 +709,14 @@ impl Agent {
         sample_rate: u32,
     ) -> Result<Vec<u8>, String> {
         let sr = if sample_rate == 0 { 24000 } else { sample_rate };
-        let mut decoders = self.opus_decoders.lock().unwrap();
-        let need_new = match decoders.get(&stream_id) {
-            Some(_) => false,
-            None => true,
+        let mut decoders = lock(&self.opus_decoders);
+        let dec = match decoders.entry(stream_id) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(v) => v.insert(
+                opus::Decoder::new(sr, opus::Channels::Mono)
+                    .map_err(|e| format!("opus init: {e}"))?,
+            ),
         };
-        if need_new {
-            let dec = opus::Decoder::new(sr, opus::Channels::Mono)
-                .map_err(|e| format!("opus init: {e}"))?;
-            decoders.insert(stream_id, dec);
-        }
-        let dec = decoders.get_mut(&stream_id).unwrap();
-        if dec as *const _ as usize == 0 {
-            return Err("decoder missing".into());
-        }
         let mut pcm = vec![0i16; 5760];
         let samples = dec
             .decode(data, &mut pcm, false)
@@ -724,15 +729,20 @@ impl Agent {
         Ok(out)
     }
 
+    /// Forget a finished (EOS) opus stream's decoder state.
+    pub(crate) fn drop_opus_decoder(&self, stream_id: u32) {
+        lock(&self.opus_decoders).remove(&stream_id);
+    }
+
     pub(crate) fn speaker_pop_pcm_internal(&self, max_bytes: u64) -> Vec<u8> {
-        let mut cons = self.speaker_ring_cons.lock().unwrap();
-        let n = max_bytes as usize;
+        let mut cons = lock(&self.speaker_ring_cons);
+        let n = cons.slots().min(max_bytes as usize);
         let mut out = Vec::with_capacity(n);
-        for _ in 0..n {
-            match cons.pop() {
-                Ok(b) => out.push(b),
-                Err(_) => break,
-            }
+        if let Ok(chunk) = cons.read_chunk(n) {
+            let (a, b) = chunk.as_slices();
+            out.extend_from_slice(a);
+            out.extend_from_slice(b);
+            chunk.commit_all();
         }
         if !out.is_empty() {
             self.speaker_pending_bytes
@@ -754,8 +764,11 @@ impl Agent {
     }
 
     pub(crate) fn speaker_clear_internal(&self) {
-        let mut cons = self.speaker_ring_cons.lock().unwrap();
-        while cons.pop().is_ok() {}
+        let mut cons = lock(&self.speaker_ring_cons);
+        let n = cons.slots();
+        if let Ok(chunk) = cons.read_chunk(n) {
+            chunk.commit_all();
+        }
         self.speaker_pending_bytes.store(0, Ordering::Relaxed);
         self.speaker_eos.store(false, Ordering::Relaxed);
     }
@@ -832,43 +845,9 @@ impl Agent {
                     tracing::warn!(cap, "audio stream to non-speaker, dropping");
                     return;
                 }
-                if self.speaker_provider().is_none() {
-                    tracing::warn!("speaker: no sink registered, dropping audio");
-                    return;
-                }
-                tracing::error!(
-                    codec = if chunk.codec == 1 { "pcm_s16le" } else if chunk.codec == 2 { "opus" } else { "unknown" },
-                    sample_rate = chunk.sample_rate,
-                    data_len = chunk.data.len(),
-                    end_of_stream = chunk.end_of_stream,
-                    "speaker: received chunk via envelope -> rtrb"
-                );
-                let agent_clone = Arc::clone(self);
-                let codec = chunk.codec;
-                let sr = chunk.sample_rate;
-                let eos = chunk.end_of_stream;
-                let sid = chunk.stream_id;
-                let data = chunk.data;
+                let agent = Arc::clone(self);
                 tokio::task::spawn_blocking(move || {
-                    if agent_clone.speaker_provider().is_none() {
-                        return;
-                    }
-                    if codec == 2 {
-                        match agent_clone.decode_opus_cached(sid, &data, sr) {
-                            Ok(pcm) => {
-                                tracing::error!(pcm_len = pcm.len(), eos, "speaker: opus decoded via rtrb cache, pushing");
-                                agent_clone.speaker_push_pcm(pcm, sr, eos);
-                                if eos {
-                                    agent_clone.opus_decoders.lock().unwrap().remove(&sid);
-                                }
-                            }
-                            Err(e) => tracing::error!(error = %e, "speaker: opus decode failed"),
-                        }
-                    } else if codec == 1 {
-                        agent_clone.speaker_push_pcm(data, sr, eos);
-                    } else {
-                        tracing::warn!(codec, "speaker: unsupported codec via envelope, dropping");
-                    }
+                    crate::caps::audio::handle_chunk(&agent, chunk);
                 });
             }
             Some(envelope::Payload::SessionClose(_)) => {
@@ -918,7 +897,7 @@ fn init_tracing() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug"));
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
         let subscriber = tracing_subscriber::registry().with(filter);
         #[cfg(target_os = "android")]
         if let Ok(layer) = tracing_android::layer("vynkor") {
@@ -1038,7 +1017,7 @@ async fn device_cycle(agent: Arc<Agent>, caps: Vec<String>) -> Result<(), AgentE
         };
         if frame.flags & FLAG_RAW_BINARY != 0 {
             let target = target_str(&frame);
-            tracing::error!(target = %target, flags = frame.flags, payload_len = frame.payload.len(), "raw binary frame received");
+            tracing::trace!(target = %target, flags = frame.flags, payload_len = frame.payload.len(), "raw binary frame received");
             let cap = target.split_once('.').map(|(_, c)| c).unwrap_or("speaker");
             let agent_c = Arc::clone(&agent);
             let payload = frame.payload.as_ref().to_vec();
@@ -1081,6 +1060,8 @@ async fn device_cycle(agent: Arc<Agent>, caps: Vec<String>) -> Result<(), AgentE
         }
     }
     agent.purge_pending();
+    // Streams cut mid-utterance never deliver their EOS; drop their decoders.
+    lock(&agent.opus_decoders).clear();
     let dropped = agent.dropped_outbound.swap(0, Ordering::Relaxed);
     if dropped > 0 {
         tracing::warn!(device_id = %agent.config.device_id, dropped, "outbound frames dropped during session");
@@ -1256,7 +1237,7 @@ impl Agent {
         self.speaker_eos_get_internal()
     }
     pub fn speaker_sample_rate_get(&self) -> u32 {
-        self.speaker_sample_rate.load(Ordering::Relaxed)
+        self.speaker_sample_rate_get_internal()
     }
     pub fn speaker_clear(&self) {
         self.speaker_clear_internal()

@@ -340,4 +340,24 @@
     <string name="wizard_skip_confirm_body">You can pair later from Settings → Hosts.</string>
     <string name="wizard_skip_yes">Skip</string>
     <string name="wizard_skip_no">Continue setup</string>
+    <!-- Android 17 local network + agent chat mode -->
+    <string name="service_unreachable">Host unreachable — %1$s</string>
+    <string name="local_network_permission_missing">no “Nearby devices” (local network) permission — grant it in app settings</string>
+    <string name="chat_target_agent">Agent</string>
+    <string name="chat_target_agent_hint">host agent plugin: plans, uses tools</string>
+    <string name="chat_target_models_header">Models (ai plugin, no tools)</string>
+    <string name="agent_confirm_title">Agent wants to run a tool</string>
+    <string name="agent_confirm_message">Tool: %1$s\n\nAllow it?</string>
+    <string name="agent_confirm_allow">Allow</string>
+    <string name="agent_confirm_deny">Deny</string>
+    <string name="agent_goal_declined">Declined: %1$s</string>
+    <string name="agent_goal_max_steps">Agent ran out of steps without a final answer.</string>
+    <string name="agent_goal_failed">Agent failed: %1$s</string>
+    <string name="agent_goal_empty">Agent finished without an answer.</string>
+    <string name="wizard_perm_lan_title">Local network</string>
+    <string name="wizard_perm_lan_subtitle">reach the host on your Wi‑Fi (Android 17)</string>
+    <string name="channel_host_actions">Host actions</string>
+    <string name="launch_request_title">Host wants to open %1$s</string>
+    <string name="launch_request_text">Tap to open</string>
+    <string name="pin_locked_wait_fmt">PIN entry locked — try again in %1$d s</string>
 </resources>

@@ -19,7 +19,7 @@ class TypingDotsView @JvmOverloads constructor(
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = MaterialColors.getColor(
             this@TypingDotsView,
-            com.google.android.material.R.attr.colorPrimary,
+            androidx.appcompat.R.attr.colorPrimary,
             DEFAULT_COLOR,
         )
     }

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Full local verification: Rust core + Android unit tests + debug APK.
-# Usage: scripts/check.sh   (ANDROID_HOME defaults to ~/Android/Sdk)
+# Usage: scripts/check.sh   (ANDROID_HOME defaults to ~/.android-sdk, then ~/Android/Sdk)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # Pick the first SDK that actually contains platforms/ (env may point at a
 # stub like /opt/android-sdk without installed packages).
-for candidate in "${ANDROID_HOME:-}" "$HOME/Android/Sdk" "$HOME/android-sdk"; do
+for candidate in "${ANDROID_HOME:-}" "$HOME/.android-sdk" "$HOME/Android/Sdk" "$HOME/android-sdk"; do
   if [ -n "$candidate" ] && [ -d "$candidate/platforms" ]; then
     export ANDROID_HOME="$candidate"
     break

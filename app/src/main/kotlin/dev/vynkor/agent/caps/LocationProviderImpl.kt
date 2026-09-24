@@ -21,18 +21,22 @@ class LocationProviderImpl(context: Context) : LocationProvider {
 
     override fun lastKnown(): Location? {
         if (!isGranted()) return null
-        for (provider in lm.getProviders(true)) {
-            val fix = lm.getLastKnownLocation(provider) ?: continue
-            return Location(
-                lat = fix.latitude,
-                lon = fix.longitude,
-                accuracyM = fix.accuracy,
-            )
-        }
-        return null
+        // Newest fix across providers — the first provider's cache could be
+        // an hours-old passive fix while GPS/network held a fresh one.
+        val fix = lm.getProviders(true)
+            .mapNotNull { runCatching { lm.getLastKnownLocation(it) }.getOrNull() }
+            .maxByOrNull { it.elapsedRealtimeNanos }
+            ?: return null
+        return Location(
+            lat = fix.latitude,
+            lon = fix.longitude,
+            accuracyM = fix.accuracy,
+        )
     }
 
-    private fun isGranted(): Boolean =
-        ContextCompat.checkSelfPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+    /** Approximate-only grants are valid too (Android 12+ lets users pick them). */
+    private fun isGranted(): Boolean = listOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+    ).any { ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED }
 }

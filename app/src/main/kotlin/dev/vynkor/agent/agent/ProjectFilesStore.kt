@@ -54,8 +54,11 @@ object ProjectFilesStore {
         val existing = list(context, profileId, projectId)
         if (existing.size >= MAX_FILES_PER_PROJECT) return null
         val resolver = context.contentResolver
-        val size = resolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: return null
-        if (size <= 0 || size > MAX_FILE_BYTES) return null
+        // UNKNOWN_LENGTH (-1) from streaming providers is not "empty".
+        val declared = runCatching {
+            resolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+        }.getOrNull() ?: -1L
+        if (declared > MAX_FILE_BYTES) return null
         val mime = mimeHint?.takeIf { it.isNotBlank() }
             ?: resolver.getType(uri)
             ?: "application/octet-stream"
@@ -63,17 +66,23 @@ object ProjectFilesStore {
             ?: uri.lastPathSegment?.substringAfterLast('/')
             ?: "file")
             .replace('/', '_')
-        val file = ProjectFile(
+        val draft = ProjectFile(
             id = java.util.UUID.randomUUID().toString(),
             name = name,
             mime = mime,
-            sizeBytes = size,
+            sizeBytes = 0,
             addedAt = System.currentTimeMillis(),
         )
-        val target = fileFor(context, profileId, projectId, file)
-        resolver.openInputStream(uri)?.use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
+        val target = fileFor(context, profileId, projectId, draft)
+        val copied = resolver.openInputStream(uri)?.use { input ->
+            target.outputStream().use { output -> AttachmentStore.copyCapped(input, output, MAX_FILE_BYTES) }
         } ?: return null
+        // A truncated or oversized copy was recorded as a valid file before.
+        if (copied !in 1..MAX_FILE_BYTES || (declared >= 0 && copied != declared)) {
+            target.delete()
+            return null
+        }
+        val file = draft.copy(sizeBytes = copied)
         persist(context, profileId, projectId, existing + file)
         file
     }.getOrNull()

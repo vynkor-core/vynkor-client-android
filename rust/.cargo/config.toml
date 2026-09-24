@@ -1,0 +1,4 @@
+[env]
+# audiopus_sys vendors an opus CMakeLists with cmake_minimum_required < 3.5,
+# which CMake 4.x refuses to configure. Harmless on older CMake.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

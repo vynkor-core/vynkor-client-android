@@ -37,25 +37,47 @@ object AttachmentStore {
         mimeHint: String?,
     ): Attachment? = runCatching {
         val resolver = context.contentResolver
-        val size = resolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: return null
-        if (size <= 0 || size > MAX_FILE_BYTES) return null
+        // Streaming providers (cloud drives, some pickers) report
+        // UNKNOWN_LENGTH (-1): that is not an empty file — copy and measure.
+        val declared = runCatching {
+            resolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
+        }.getOrNull() ?: -1L
+        if (declared > MAX_FILE_BYTES) return null
         val mime = mimeHint?.takeIf { it.isNotBlank() }
             ?: resolver.getType(uri)
             ?: "application/octet-stream"
         val name = displayName?.takeIf { it.isNotBlank() }
             ?: uri.lastPathSegment?.substringAfterLast('/')
             ?: "file"
-        val attachment = Attachment(name = name, mime = mime, sizeBytes = size)
-        val target = fileFor(context, chatId, attachment)
-        resolver.openInputStream(uri)?.use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
+        val draft = Attachment(name = name, mime = mime, sizeBytes = 0)
+        val target = fileFor(context, chatId, draft)
+        val copied = resolver.openInputStream(uri)?.use { input ->
+            target.outputStream().use { output -> copyCapped(input, output) }
         } ?: return null
-        if (target.length() != size) {
+        val complete = copied in 1..MAX_FILE_BYTES && (declared < 0 || copied == declared)
+        if (!complete) {
             target.delete()
             return null
         }
-        attachment
+        draft.copy(sizeBytes = copied)
     }.getOrNull()
+
+    /** Copies at most [MAX_FILE_BYTES] + 1 bytes; the caller rejects anything over. */
+    internal fun copyCapped(
+        input: java.io.InputStream,
+        output: java.io.OutputStream,
+        maxBytes: Long = MAX_FILE_BYTES,
+    ): Long {
+        val buf = ByteArray(64 * 1024)
+        var total = 0L
+        while (total <= maxBytes) {
+            val n = input.read(buf)
+            if (n < 0) break
+            output.write(buf, 0, n)
+            total += n
+        }
+        return total
+    }
 
     /** Removes the bytes of every listed attachment (best effort). */
     fun deleteAll(context: Context, chatId: String, attachments: List<Attachment>) {

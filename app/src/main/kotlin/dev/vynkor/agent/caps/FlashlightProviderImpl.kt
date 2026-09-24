@@ -6,11 +6,15 @@ import android.hardware.camera2.CameraManager
 import dev.vynkor.agent.FlashlightProvider
 
 /**
- * Torch control. Android exposes no synchronous torch getter before API 33,
- * so the on/off state is the last value set by any instance in this process
- * (shared companion state — widget broadcasts and host requests agree).
+ * Torch control. There is no synchronous torch getter, so the state comes
+ * from a process-wide TorchCallback — it also sees the torch being switched
+ * from the quick-settings tile or another app, which the old "last value we
+ * set" bookkeeping missed (toggle then did the opposite of what was asked).
  */
 class FlashlightProviderImpl(context: Context) : FlashlightProvider {
+    init {
+        registerTorchWatcher(context.applicationContext)
+    }
 
     override fun available(): Boolean = flashId() != null
 
@@ -43,5 +47,20 @@ class FlashlightProviderImpl(context: Context) : FlashlightProvider {
     private companion object {
         @Volatile
         var torchOn: Boolean = false
+
+        private val watcherRegistered = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun registerTorchWatcher(appContext: Context) {
+            if (!watcherRegistered.compareAndSet(false, true)) return
+            val manager = appContext.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return
+            manager.registerTorchCallback(
+                object : CameraManager.TorchCallback() {
+                    override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
+                        torchOn = enabled
+                    }
+                },
+                android.os.Handler(android.os.Looper.getMainLooper()),
+            )
+        }
     }
 }

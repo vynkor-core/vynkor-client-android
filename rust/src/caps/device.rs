@@ -217,7 +217,7 @@ pub fn flashlight(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Valu
     let Some(p) = agent.flashlight_provider() else {
         return Err("flashlight provider not registered".into());
     };
-    if !p.available() && req.action != "get" {
+    if !p.available() && !matches!(req.action.as_str(), "get" | "") {
         return Err("no flash unit on this device".into());
     }
     match req.action.as_str() {
@@ -249,7 +249,7 @@ pub fn launcher(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Value,
         return Err("launcher provider not registered".into());
     };
     match req.action.as_str() {
-        "list" => {
+        "list" | "" => {
             let limit = clamp_limit(u64_param(&params(req), "limit"), LAUNCHER_MAX_LIMIT);
             let apps: Vec<serde_json::Value> = p
                 .apps()
@@ -359,6 +359,10 @@ pub fn calendar(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Value,
                 return Err(r#"calendar add requires {"title": "..."}"#.into());
             }
             let start = i64_param(&p_params, "start_ms");
+            // A missing start used to become 0 — an event on 1 Jan 1970.
+            if start <= 0 {
+                return Err(r#"calendar add requires {"start_ms": <epoch ms>}"#.into());
+            }
             let end = i64_param(&p_params, "end_ms");
             if end > 0 && end < start {
                 return Err("event end is before its start".into());

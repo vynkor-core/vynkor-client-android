@@ -32,6 +32,7 @@ class MicCapture {
 
     @Volatile
     private var running = false
+    @Volatile
     private var thread: Thread? = null
     private var record: AudioRecord? = null
 
@@ -68,7 +69,9 @@ class MicCapture {
             running = true
             record = rec
             // The reader captures `rec` locally and owns its stop()+release().
-            thread = thread(name = "vynkor-mic") { readLoop(agent, rec) }
+            // Assigned before start(): the reader compares itself to [thread].
+            thread = thread(start = false, name = "vynkor-mic") { readLoop(agent, rec) }
+                .also { it.start() }
         }
     }
 
@@ -106,16 +109,24 @@ class MicCapture {
 
     private fun readLoop(agent: Agent, rec: AudioRecord) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
-        rec.startRecording()
         val buf = ByteArray(640) // 20 ms at 16 kHz
         try {
+            // Inside the try: a mic already held by another app throws here,
+            // and the record must still be released.
+            rec.startRecording()
             while (running) {
                 val n = rec.read(buf, 0, buf.size)
                 if (n <= 0) break
                 onChunkPushed?.invoke()
                 agent.pushMicPcm(buf.copyOf(n))
             }
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "mic capture failed", e)
         } finally {
+            // The reader is gone however it ended (error, n <= 0): report it,
+            // or the session watchdog believes a dead capture is still live.
+            // Lock-free on purpose: stop() holds the monitor while joining us.
+            if (thread === Thread.currentThread()) running = false
             try {
                 if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) rec.stop()
             } catch (e: IllegalStateException) {

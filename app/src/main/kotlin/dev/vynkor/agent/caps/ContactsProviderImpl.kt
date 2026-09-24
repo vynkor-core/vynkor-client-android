@@ -35,6 +35,7 @@ class ContactsProviderImpl(context: Context) : ContactsProvider {
         val cursor = ctx.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(
+                ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
                 ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
                 ContactsContract.CommonDataKinds.Phone.NUMBER,
             ),
@@ -42,17 +43,22 @@ class ContactsProviderImpl(context: Context) : ContactsProvider {
             args,
             sortOrder,
         ) ?: return result
+        // One Contact per person with all their numbers — rows are per phone
+        // number, and a two-number contact used to come back as two people.
+        val byId = LinkedHashMap<Long, Pair<String, LinkedHashSet<String>>>()
         cursor.use {
+            val idIdx = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
             val nameIdx = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
             val numIdx = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
-            val seen = HashSet<Pair<String, String>>()
             while (it.moveToNext()) {
-                val name = it.getString(nameIdx) ?: ""
-                val number = it.getString(numIdx) ?: ""
-                if (seen.add(name to number)) {
-                    result.add(Contact(name = name, phones = listOf(number), emails = emptyList()))
+                val entry = byId.getOrPut(it.getLong(idIdx)) {
+                    (it.getString(nameIdx) ?: "") to LinkedHashSet()
                 }
+                it.getString(numIdx)?.takeIf { n -> n.isNotBlank() }?.let(entry.second::add)
             }
+        }
+        byId.values.forEach { (name, phones) ->
+            result.add(Contact(name = name, phones = phones.toList(), emails = emptyList()))
         }
         return result
     }

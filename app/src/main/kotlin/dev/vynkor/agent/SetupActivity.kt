@@ -3,6 +3,7 @@ package dev.vynkor.agent
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -17,6 +18,7 @@ import com.google.android.material.snackbar.Snackbar
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.vynkor.agent.agent.AgentHolder
+import dev.vynkor.agent.agent.AgentPermissions
 import dev.vynkor.agent.agent.AgentService
 import dev.vynkor.agent.agent.AppPrefs
 import dev.vynkor.agent.agent.DeviceIdentity
@@ -38,7 +40,17 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySetupBinding
 
     /** Permission rows of the permissions step, in display order. */
-    private val permRows = listOf(
+    private val permRows = listOfNotNull(
+        // Android 17: without it the host on the LAN is unreachable at all.
+        if (Build.VERSION.SDK_INT >= 37) {
+            PermRow(
+                AgentPermissions.ACCESS_LOCAL_NETWORK,
+                R.string.wizard_perm_lan_title,
+                R.string.wizard_perm_lan_subtitle,
+            )
+        } else {
+            null
+        },
         PermRow(
             Manifest.permission.CAMERA,
             R.string.wizard_perm_camera_title,
@@ -59,11 +71,15 @@ class SetupActivity : AppCompatActivity() {
             R.string.wizard_perm_contacts_title,
             R.string.wizard_perm_contacts_subtitle,
         ),
-        PermRow(
-            Manifest.permission.POST_NOTIFICATIONS,
-            R.string.wizard_perm_notif_title,
-            R.string.wizard_perm_notif_subtitle,
-        ),
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            PermRow(
+                Manifest.permission.POST_NOTIFICATIONS,
+                R.string.wizard_perm_notif_title,
+                R.string.wizard_perm_notif_subtitle,
+            )
+        } else {
+            null
+        },
     )
 
     private data class PermRow(val perm: String, val title: Int, val subtitle: Int)
@@ -220,7 +236,7 @@ class SetupActivity : AppCompatActivity() {
 
     private fun startConnection() {
         showStep(STEP_CONNECT)
-        AgentService.start(this)
+        if (AgentHolder.agent == null) AgentService.start(this) else AgentService.restartIfRunning(this)
     }
 
     private fun observeConnection() {

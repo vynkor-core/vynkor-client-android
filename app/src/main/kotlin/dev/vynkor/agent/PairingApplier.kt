@@ -56,10 +56,34 @@ object PairingApplier {
         return Decision.PendingConfirmation
     }
 
-    /** Saves and activates the profile; does not touch the service. */
+    /**
+     * Saves and activates the profile; does not touch the service.
+     *
+     * Re-pairing the same host+device (fresh token, rotated secret, new cert)
+     * updates the existing profile in place — keeping its id (chats, projects
+     * and drafts are keyed by it) and its chat/AI choices — instead of adding
+     * a duplicate host entry on every scan.
+     */
     fun apply(activity: AppCompatActivity, profile: HostProfile) {
-        DeviceIdentity.setDeviceId(activity, profile.deviceId)
-        ProfileStore.save(activity, profile)
-        ProfileStore.setActive(activity, profile.id)
+        val deviceId = profile.deviceId.ifBlank { DeviceIdentity.deviceId(activity) }
+        DeviceIdentity.setDeviceId(activity, deviceId)
+        val existing = ProfileStore.list(activity).firstOrNull {
+            it.deviceId == deviceId && sameHost(it.hostUrl, profile.hostUrl)
+        }
+        val merged = existing?.copy(
+            name = profile.name.ifBlank { existing.name },
+            hostUrl = profile.hostUrl,
+            jwtToken = profile.jwtToken,
+            deviceSecret = profile.deviceSecret,
+            certPem = profile.certPem,
+        ) ?: profile.copy(deviceId = deviceId)
+        ProfileStore.save(activity, merged)
+        ProfileStore.setActive(activity, merged.id)
+    }
+
+    /** Host identity for re-pair matching: scheme-less host:port. */
+    internal fun sameHost(a: String, b: String): Boolean {
+        fun key(u: String) = u.trim().substringAfter("://").substringBefore('/').lowercase()
+        return key(a) == key(b)
     }
 }

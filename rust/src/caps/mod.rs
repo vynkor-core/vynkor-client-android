@@ -10,7 +10,8 @@ pub mod device;
 
 /// Handle one host→device ActionRequest for a capability. The response echoes
 /// the request `action_id` so the host router can match it to the caller.
-pub fn handle_action_request(agent: &Agent, cap: &str, req: ActionRequest) -> Envelope {
+pub fn handle_action_request(agent: &Agent, cap: &str, mut req: ActionRequest) -> Envelope {
+    req.action = sub_action(cap, &req);
     let action_id = req.action_id.clone();
     let resp = match cap {
         "battery" => action_battery(agent, &req),
@@ -49,6 +50,28 @@ pub fn handle_action_request(agent: &Agent, cap: &str, req: ActionRequest) -> En
     }
 }
 
+/// The capability's own verb (`get`, `on`, `read`, …). The kernel routes a
+/// host call by its full name — `my-phone.flashlight` — so that is what
+/// arrives in `req.action`, and every verb-based capability used to reject
+/// it ("unknown flashlight action `my-phone.flashlight`"). Accepted forms:
+/// - bare verb (`on`) — already a verb, kept;
+/// - `{id}.{cap}` — verb from `params.action` (default: the cap's default);
+/// - `{id}.{cap}.{verb}` — verb from the suffix.
+pub(crate) fn sub_action(cap: &str, req: &ActionRequest) -> String {
+    let action = req.action.as_str();
+    if !action.contains('.') {
+        return action.to_string();
+    }
+    let marker = format!(".{cap}.");
+    if let Some(idx) = action.find(&marker) {
+        return action[idx + marker.len()..].to_string();
+    }
+    serde_json::from_slice::<serde_json::Value>(&req.params_json)
+        .ok()
+        .and_then(|v| v.get("action").and_then(|a| a.as_str()).map(String::from))
+        .unwrap_or_default()
+}
+
 fn action_battery(agent: &Agent, _req: &ActionRequest) -> Result<serde_json::Value, String> {
     let Some(p) = agent.battery_provider() else {
         return Err("battery provider not registered".into());
@@ -58,7 +81,8 @@ fn action_battery(agent: &Agent, _req: &ActionRequest) -> Result<serde_json::Val
     // the host as -214748364.8 °C.
     let raw_temp = p.temperature_c();
     let temperature = if (-40.0..=100.0).contains(&raw_temp) {
-        serde_json::json!(raw_temp)
+        // Sensor resolution is 0.1 °C; f32→f64 otherwise shows 38.099998.
+        serde_json::json!((f64::from(raw_temp) * 10.0).round() / 10.0)
     } else {
         serde_json::Value::Null
     };
@@ -88,7 +112,7 @@ fn action_clipboard(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Va
         return Err("clipboard provider not registered".into());
     };
     let action = req.action.as_str();
-    if action == "read" {
+    if action == "read" || action.is_empty() {
         return Ok(serde_json::json!({ "text": p.read().unwrap_or_default() }));
     }
     if action == "write" {
@@ -134,4 +158,29 @@ fn action_contacts(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Val
         })
         .collect();
     Ok(serde_json::Value::Array(json))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(action: &str, params: &str) -> ActionRequest {
+        ActionRequest {
+            action: action.into(),
+            params_json: params.as_bytes().to_vec(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn sub_action_from_bare_verb_suffix_or_params() {
+        assert_eq!(sub_action("flashlight", &req("on", "{}")), "on");
+        assert_eq!(sub_action("flashlight", &req("my-phone.flashlight.toggle", "{}")), "toggle");
+        assert_eq!(
+            sub_action("flashlight", &req("my-phone.flashlight", r#"{"action":"off"}"#)),
+            "off"
+        );
+        // Full name without a verb → "" = the capability's default verb.
+        assert_eq!(sub_action("flashlight", &req("my-phone.flashlight", "{}")), "");
+    }
 }

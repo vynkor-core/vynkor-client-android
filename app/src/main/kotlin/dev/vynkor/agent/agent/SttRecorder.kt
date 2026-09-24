@@ -116,8 +116,10 @@ class SttRecorder {
 
     private fun readLoop(record: AudioRecord) {
         val buffer = ShortArray(record.bufferSizeInFrames)
-        record.startRecording()
         try {
+            // Inside the try: with the mic held by another app this throws,
+            // and an uncaught exception here took the whole process down.
+            record.startRecording()
             while (recording) {
                 val read = record.read(buffer, 0, buffer.size)
                 if (read <= 0) break

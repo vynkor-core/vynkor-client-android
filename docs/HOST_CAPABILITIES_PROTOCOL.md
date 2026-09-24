@@ -5,12 +5,13 @@
 > implemented; anything marked ⚠️ requires matching behavior on the host to be
 > useful end-to-end.
 >
-> Wire format: `vynkor-wire` / proto v1.6 (`Envelope`, `ActionRequest`,
-> `ActionResponse`, `EventPublish`) over per-capability WebSocket sessions,
+> Wire format: `vynkor-wire` 0.0.4 / proto v1.7 (`Envelope`, `ActionRequest`,
+> `ActionResponse`, `EventPublish`) over **one** WebSocket per device,
 > frame-MAC keyed off the per-device `device_secret` (pairing payload v2).
 >
-> Registration: each capability connects as plugin id `{device_id}.{cap}` with
-> target routing `kernel` for kernel-routed envelopes.
+> Registration: the device registers once as plugin id `{device_id}` with
+> every capability in `capabilities`; the kernel addresses each one as
+> `{device_id}.{cap}` and routes kernel-bound envelopes to `kernel`.
 
 ## Capability list
 
@@ -149,6 +150,17 @@ No params. Response: arrays of model/agent descriptors
 ---
 
 ## Extended device controls
+
+**Calling a verb from the host.** The kernel routes a host call by the full
+capability name (`my-phone.flashlight`), so that is what the device receives
+as `ActionRequest.action`. The verb in the tables below is resolved as:
+
+* `{"action": "<verb>"}` in `params_json` — e.g. action `my-phone.flashlight`,
+  params `{"action": "toggle"}`;
+* or a `{id}.{cap}.{verb}` action name (`my-phone.flashlight.toggle`) where the
+  host can route it;
+* no verb → the capability's default (`get` / `status` / `read` / `list` /
+  `inbox` / `recent` / `upcoming`).
 
 ### `{id}.device`
 

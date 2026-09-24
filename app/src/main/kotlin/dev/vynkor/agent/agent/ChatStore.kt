@@ -284,10 +284,13 @@ object ChatStore {
             if (json == null) return@execute
             val p = prefs(app)
             val previous = p.getString(profileId, null)
+            // Already on the IO thread: commit() makes the write durable
+            // before the next one; apply() re-queued it and a process kill
+            // right after a reply could lose the message.
             p.edit()
                 .putString(profileId, json)
                 .putString(profileId + BAK_SUFFIX, previous)
-                .apply()
+                .commit()
         }
     }
 
