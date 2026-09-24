@@ -28,7 +28,7 @@ class SmsProviderImpl(context: Context) : SmsProvider {
             selection = null
             args = null
         }
-        val cursor = ctx.contentResolver.query(
+        val cursor = ctx.contentResolver.queryLimited(
             Telephony.Sms.Inbox.CONTENT_URI,
             arrayOf(
                 Telephony.Sms.Inbox.ADDRESS,
@@ -37,24 +37,19 @@ class SmsProviderImpl(context: Context) : SmsProvider {
             ),
             selection,
             args,
-            "${Telephony.Sms.Inbox.DATE} DESC LIMIT $effective",
+            "${Telephony.Sms.Inbox.DATE} DESC",
+            effective.toInt(),
         ) ?: return emptyList()
-        val result = mutableListOf<SmsMessage>()
-        cursor.use { c ->
-            val addr = c.getColumnIndexOrThrow(Telephony.Sms.Inbox.ADDRESS)
-            val body = c.getColumnIndexOrThrow(Telephony.Sms.Inbox.BODY)
-            val date = c.getColumnIndexOrThrow(Telephony.Sms.Inbox.DATE)
-            while (c.moveToNext()) {
-                result.add(
-                    SmsMessage(
-                        sender = c.getString(addr) ?: "",
-                        body = c.getString(body) ?: "",
-                        timestampMs = c.getLong(date),
-                    )
-                )
-            }
+        val addr = cursor.getColumnIndexOrThrow(Telephony.Sms.Inbox.ADDRESS)
+        val body = cursor.getColumnIndexOrThrow(Telephony.Sms.Inbox.BODY)
+        val date = cursor.getColumnIndexOrThrow(Telephony.Sms.Inbox.DATE)
+        return cursor.rows(effective.toInt()) { c ->
+            SmsMessage(
+                sender = c.getString(addr) ?: "",
+                body = c.getString(body) ?: "",
+                timestampMs = c.getLong(date),
+            )
         }
-        return result
     }
 
     private fun granted(): Boolean =

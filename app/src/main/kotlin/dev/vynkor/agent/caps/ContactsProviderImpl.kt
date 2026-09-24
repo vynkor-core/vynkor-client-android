@@ -30,9 +30,8 @@ class ContactsProviderImpl(context: Context) : ContactsProvider {
             null
         }
         val args = if (query.isNotBlank()) arrayOf("%$query%") else null
-        val sortOrder =
-            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC LIMIT $effectiveLimit"
-        val cursor = ctx.contentResolver.query(
+        val sortOrder = "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+        val cursor = ctx.contentResolver.queryLimited(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             arrayOf(
                 ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
@@ -42,20 +41,19 @@ class ContactsProviderImpl(context: Context) : ContactsProvider {
             selection,
             args,
             sortOrder,
+            effectiveLimit.toInt(),
         ) ?: return result
         // One Contact per person with all their numbers — rows are per phone
         // number, and a two-number contact used to come back as two people.
         val byId = LinkedHashMap<Long, Pair<String, LinkedHashSet<String>>>()
-        cursor.use {
-            val idIdx = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
-            val nameIdx = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-            val numIdx = it.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
-            while (it.moveToNext()) {
-                val entry = byId.getOrPut(it.getLong(idIdx)) {
-                    (it.getString(nameIdx) ?: "") to LinkedHashSet()
-                }
-                it.getString(numIdx)?.takeIf { n -> n.isNotBlank() }?.let(entry.second::add)
+        val idIdx = cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+        val nameIdx = cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+        val numIdx = cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER)
+        cursor.rows(effectiveLimit.toInt()) {
+            val entry = byId.getOrPut(it.getLong(idIdx)) {
+                (it.getString(nameIdx) ?: "") to LinkedHashSet()
             }
+            it.getString(numIdx)?.takeIf { n -> n.isNotBlank() }?.let(entry.second::add)
         }
         byId.values.forEach { (name, phones) ->
             result.add(Contact(name = name, phones = phones.toList(), emails = emptyList()))
