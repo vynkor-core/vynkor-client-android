@@ -17,7 +17,7 @@ class CallsProviderImpl(context: Context) : CallsProvider {
     override fun recent(limit: UInt): List<CallLogEntry> {
         if (!granted()) return emptyList()
         val effective = if (limit in 1u..MAX_LIMIT) limit else MAX_LIMIT
-        val cursor = ctx.contentResolver.query(
+        val cursor = ctx.contentResolver.queryLimited(
             CallLog.Calls.CONTENT_URI,
             arrayOf(
                 CallLog.Calls.NUMBER,
@@ -28,28 +28,23 @@ class CallsProviderImpl(context: Context) : CallsProvider {
             ),
             null,
             null,
-            "${CallLog.Calls.DATE} DESC LIMIT $effective",
+            "${CallLog.Calls.DATE} DESC",
+            effective.toInt(),
         ) ?: return emptyList()
-        val result = mutableListOf<CallLogEntry>()
-        cursor.use { c ->
-            val number = c.getColumnIndexOrThrow(CallLog.Calls.NUMBER)
-            val name = c.getColumnIndexOrThrow(CallLog.Calls.CACHED_NAME)
-            val type = c.getColumnIndexOrThrow(CallLog.Calls.TYPE)
-            val date = c.getColumnIndexOrThrow(CallLog.Calls.DATE)
-            val duration = c.getColumnIndexOrThrow(CallLog.Calls.DURATION)
-            while (c.moveToNext()) {
-                result.add(
-                    CallLogEntry(
-                        number = c.getString(number) ?: "",
-                        name = c.getString(name) ?: "",
-                        callType = typeName(c.getInt(type)),
-                        timestampMs = c.getLong(date),
-                        durationS = c.getLong(duration).coerceAtLeast(0).toUInt(),
-                    )
-                )
-            }
+        val number = cursor.getColumnIndexOrThrow(CallLog.Calls.NUMBER)
+        val name = cursor.getColumnIndexOrThrow(CallLog.Calls.CACHED_NAME)
+        val type = cursor.getColumnIndexOrThrow(CallLog.Calls.TYPE)
+        val date = cursor.getColumnIndexOrThrow(CallLog.Calls.DATE)
+        val duration = cursor.getColumnIndexOrThrow(CallLog.Calls.DURATION)
+        return cursor.rows(effective.toInt()) { c ->
+            CallLogEntry(
+                number = c.getString(number) ?: "",
+                name = c.getString(name) ?: "",
+                callType = typeName(c.getInt(type)),
+                timestampMs = c.getLong(date),
+                durationS = c.getLong(duration).coerceAtLeast(0).toUInt(),
+            )
         }
-        return result
     }
 
     private fun typeName(type: Int): String = when (type) {

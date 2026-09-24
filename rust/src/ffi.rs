@@ -114,6 +114,9 @@ pub trait BatteryProvider: Send + Sync {
 #[uniffi::export(with_foreign)]
 pub trait LocationProvider: Send + Sync {
     fn last_known(&self) -> Option<Location>;
+    /// Why [last_known] has nothing (permission missing, location services
+    /// off); None when a fix simply has not arrived yet.
+    fn unavailable_reason(&self) -> Option<String>;
 }
 
 /// Backend for `device.clipboard` — read + write.

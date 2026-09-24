@@ -28,7 +28,7 @@ class CalendarProviderImpl(context: Context) : CalendarProvider {
             .appendPath(now.toString())
             .appendPath(until.toString())
             .build()
-        val cursor = ctx.contentResolver.query(
+        val cursor = ctx.contentResolver.queryLimited(
             uri,
             arrayOf(
                 CalendarContract.Instances.TITLE,
@@ -40,24 +40,19 @@ class CalendarProviderImpl(context: Context) : CalendarProvider {
             ),
             null,
             null,
-            "${CalendarContract.Instances.BEGIN} ASC LIMIT $effectiveLimit",
+            "${CalendarContract.Instances.BEGIN} ASC",
+            effectiveLimit.toInt(),
         ) ?: return emptyList()
-        val result = mutableListOf<CalendarEvent>()
-        cursor.use { c ->
-            while (c.moveToNext()) {
-                result.add(
-                    CalendarEvent(
-                        title = c.getStringOrEmpty(CalendarContract.Instances.TITLE),
-                        description = c.getStringOrEmpty(CalendarContract.Instances.DESCRIPTION),
-                        location = c.getStringOrEmpty(CalendarContract.Instances.EVENT_LOCATION),
-                        startMs = c.getLongOrNull(CalendarContract.Instances.BEGIN) ?: 0L,
-                        endMs = c.getLongOrNull(CalendarContract.Instances.END) ?: 0L,
-                        calendarName = c.getStringOrEmpty(CalendarContract.Instances.CALENDAR_DISPLAY_NAME),
-                    )
-                )
-            }
+        return cursor.rows(effectiveLimit.toInt()) { c ->
+            CalendarEvent(
+                title = c.getStringOrEmpty(CalendarContract.Instances.TITLE),
+                description = c.getStringOrEmpty(CalendarContract.Instances.DESCRIPTION),
+                location = c.getStringOrEmpty(CalendarContract.Instances.EVENT_LOCATION),
+                startMs = c.getLongOrNull(CalendarContract.Instances.BEGIN) ?: 0L,
+                endMs = c.getLongOrNull(CalendarContract.Instances.END) ?: 0L,
+                calendarName = c.getStringOrEmpty(CalendarContract.Instances.CALENDAR_DISPLAY_NAME),
+            )
         }
-        return result
     }
 
     override fun addEvent(
