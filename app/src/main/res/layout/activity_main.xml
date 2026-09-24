@@ -70,12 +70,14 @@
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
-                    <TextView
+                    <!-- Real shape, not a "●" glyph: glyph size/baseline varied by font. -->
+                    <View
                         android:id="@+id/statusDot"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="●"
-                        android:textSize="18sp" />
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:layout_marginStart="4dp"
+                        android:layout_marginEnd="4dp"
+                        android:background="@drawable/widget_dot" />
 
                     <TextView
                         android:id="@+id/statusText"
@@ -96,11 +98,22 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Group: hosts & security (ui-reference: rounded card with icon rows). -->
+        <!-- Rows grouped by topic (ui-reference: sectioned settings), not one
+             11-row card. -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="20dp"
+            android:layout_marginBottom="8dp"
+            android:accessibilityHeading="true"
+            android:text="@string/settings_section_connection"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            android:textColor="?attr/colorPrimary" />
+
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
             app:cardCornerRadius="16dp"
             app:cardElevation="1dp">
 
@@ -119,7 +132,7 @@
                     android:background="?android:attr/listDivider" />
 
                 <include
-                    android:id="@+id/rowNotifications"
+                    android:id="@+id/rowCaps"
                     layout="@layout/item_settings_row" />
 
                 <View
@@ -128,13 +141,33 @@
                     android:background="?android:attr/listDivider" />
 
                 <include
-                    android:id="@+id/rowCaps"
+                    android:id="@+id/rowNotifications"
                     layout="@layout/item_settings_row" />
 
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="?android:attr/listDivider" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp"
+            android:accessibilityHeading="true"
+            android:text="@string/settings_section_personal"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            android:textColor="?attr/colorPrimary" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
                 <include
                     android:id="@+id/rowAppearance"
@@ -155,7 +188,7 @@
                     android:background="?android:attr/listDivider" />
 
                 <include
-                    android:id="@+id/rowNotifLook"
+                    android:id="@+id/rowChat"
                     layout="@layout/item_settings_row" />
 
                 <View
@@ -164,13 +197,33 @@
                     android:background="?android:attr/listDivider" />
 
                 <include
-                    android:id="@+id/rowChat"
+                    android:id="@+id/rowNotifLook"
                     layout="@layout/item_settings_row" />
 
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="?android:attr/listDivider" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp"
+            android:accessibilityHeading="true"
+            android:text="@string/settings_section_privacy"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            android:textColor="?attr/colorPrimary" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
                 <include
                     android:id="@+id/rowSecurity"
@@ -185,10 +238,30 @@
                     android:id="@+id/rowData"
                     layout="@layout/item_settings_row" />
 
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="?android:attr/listDivider" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="24dp"
+            android:layout_marginBottom="8dp"
+            android:accessibilityHeading="true"
+            android:text="@string/settings_section_other"
+            android:textAppearance="?attr/textAppearanceLabelLarge"
+            android:textColor="?attr/colorPrimary" />
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="1dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
                 <include
                     android:id="@+id/rowDiagnostics"
@@ -202,6 +275,7 @@
                 <include
                     android:id="@+id/rowAbout"
                     layout="@layout/item_settings_row" />
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
     </LinearLayout>

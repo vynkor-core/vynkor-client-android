@@ -360,4 +360,20 @@
     <string name="launch_request_title">Host wants to open %1$s</string>
     <string name="launch_request_text">Tap to open</string>
     <string name="pin_locked_wait_fmt">PIN entry locked — try again in %1$d s</string>
+    <string name="settings_section_connection">Connection</string>
+    <string name="settings_section_personal">Personalization</string>
+    <string name="settings_section_privacy">Privacy &amp; data</string>
+    <string name="settings_section_other">Other</string>
+    <string name="confirm_channel_name">Action approvals</string>
+    <string name="confirm_allow">Allow</string>
+    <string name="confirm_deny">Deny</string>
+    <string name="confirm_public_title">vynkor: an action needs your approval</string>
+    <string name="confirm_sms_title">Send SMS?</string>
+    <string name="confirm_sms_body">To: %1$s\n%2$s</string>
+    <string name="confirm_call_title">Place a call?</string>
+    <string name="confirm_call_body">Number: %1$s\nRequested by your host. Nothing happens unless you allow it.</string>
+    <string name="perm_sms_send_title">Send SMS</string>
+    <string name="perm_sms_send_subtitle">host may send only after you approve each message</string>
+    <string name="perm_call_title">Phone calls</string>
+    <string name="perm_call_subtitle">host may dial only after you approve each call</string>
 </resources>

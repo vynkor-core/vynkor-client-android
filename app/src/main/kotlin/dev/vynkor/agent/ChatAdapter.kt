@@ -44,6 +44,7 @@ class ChatAdapter(
     private val onSpeak: (ChatMessage) -> Unit,
     private val onTypingTap: (() -> Unit)? = null,
     private val onAttachmentTap: ((String, dev.vynkor.agent.agent.Attachment) -> Unit)? = null,
+    private val onRetry: ((ChatMessage) -> Unit)? = null,
 ) : ListAdapter<ChatMessage, ChatAdapter.Holder>(DIFF) {
 
     /** Chat id owning the current list; used to resolve attachment paths. */
@@ -55,15 +56,30 @@ class ChatAdapter(
     private var typingRevealed: Int = 0
 
     fun submit(messages: List<ChatMessage>) {
-        submitList(messages.toList())
+        // Last row rebinds so Retry tracks which error is the latest turn.
+        submitList(messages.toList()) {
+            if (itemCount > 0) notifyItemChanged(itemCount - 1)
+        }
         typingId = null
         typingRevealed = 0
         speaking = null
     }
 
     fun append(message: ChatMessage) {
-        submitList(currentList + message)
+        val prevLast = currentList.lastIndex
+        // The old last row may be an error showing Retry — rebind it so the
+        // button goes away once it is no longer the latest turn.
+        submitList(currentList + message) {
+            if (prevLast >= 0) notifyItemChanged(prevLast)
+        }
     }
+
+    /** Retry fits only the latest turn: an error right after the user's ask. */
+    private fun isRetryable(position: Int): Boolean =
+        onRetry != null &&
+            position == itemCount - 1 &&
+            getItem(position).role == "error" &&
+            position > 0 && getItem(position - 1).role == "user"
 
     fun clear() {
         submitList(emptyList())
@@ -114,7 +130,7 @@ class ChatAdapter(
         Holder(ItemMessageBinding.inflate(LayoutInflater.from(parent.context), parent, false))
 
     override fun onBindViewHolder(holder: Holder, position: Int) {
-        holder.bind(getItem(position), speaking == getItem(position))
+        holder.bind(getItem(position), speaking == getItem(position), isRetryable(position))
     }
 
     override fun onBindViewHolder(
@@ -134,9 +150,10 @@ class ChatAdapter(
         private val ctx = binding.root.context
         private var markwon: Markwon? = null
 
-        fun bind(message: ChatMessage, isSpeaking: Boolean) {
+        fun bind(message: ChatMessage, isSpeaking: Boolean, retryable: Boolean = false) {
             val lp = binding.bubble.layoutParams as FrameLayout.LayoutParams
             renderAttachments(message)
+            binding.retryAction.visibility = View.GONE // recycled rows
             // The footer spans the text's width; a one-word reply ("51")
             // squeezed copy/more/speak into a sliver. Assistant bubbles get
             // room for all three buttons; others size to their text.
@@ -161,8 +178,14 @@ class ChatAdapter(
                     binding.messageText.text = message.content
                     binding.messageText.setTextColor(color(R.color.error))
                     binding.footerRow.visibility = View.GONE
+                    binding.retryAction.visibility = if (retryable) View.VISIBLE else View.GONE
+                    binding.retryAction.setOnClickListener { onRetry?.invoke(message) }
                     itemView.setOnClickListener(null)
-                    itemView.setOnLongClickListener(null)
+                    // Error text is what a bug report needs — make it copyable.
+                    itemView.setOnLongClickListener {
+                        onCopy(message)
+                        true
+                    }
                 }
                 else -> {
                     lp.gravity = Gravity.START
@@ -345,10 +368,9 @@ class ChatAdapter(
          * Fenced code blocks get a tiny "[⧉](vynkor-copy://N)" line right
          * after the closing fence; the custom link resolver turns a tap on
          * it into "copy block to clipboard". Blocks are stashed in
-         * [pendingCodeBlocks] at transform time and consumed on click.
+         * [pendingCodeBlocks] at transform time and looked up on click.
          */
         private val pendingCodeBlocks = java.util.concurrent.ConcurrentHashMap<Int, String>()
-        private val codeBlockCounter = java.util.concurrent.atomic.AtomicInteger()
 
         /** Appends a copy-marker link after every fenced block. */
         internal fun withCopyMarkers(markdown: String): String {
@@ -359,8 +381,12 @@ class ChatAdapter(
             var pos = 0
             m.reset()
             while (m.find()) {
-                val idx = codeBlockCounter.incrementAndGet()
-                pendingCodeBlocks[idx] = m.group(1).orEmpty()
+                // Keyed by content: every rebind re-registers the same key
+                // instead of growing the map, and the link keeps working
+                // after the first copy.
+                val code = m.group(1).orEmpty()
+                val idx = code.hashCode()
+                pendingCodeBlocks[idx] = code
                 m.appendReplacement(
                     sb,
                     java.util.regex.Matcher.quoteReplacement(
@@ -374,15 +400,18 @@ class ChatAdapter(
 
         private fun copyCode(view: android.view.View, link: String) {
             val idx = link.removePrefix("vynkor-copy://").toIntOrNull() ?: return
-            val code = pendingCodeBlocks.remove(idx) ?: return
+            val code = pendingCodeBlocks[idx] ?: return
             val cm = view.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                 as android.content.ClipboardManager
             cm.setPrimaryClip(android.content.ClipData.newPlainText("code", code))
-            android.widget.Toast.makeText(
-                view.context,
-                dev.vynkor.agent.R.string.copied,
-                android.widget.Toast.LENGTH_SHORT,
-            ).show()
+            // Android 13+ confirms clipboard writes itself.
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+                android.widget.Toast.makeText(
+                    view.context,
+                    dev.vynkor.agent.R.string.copied,
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
 
         private fun createMarkwon(ctx: android.content.Context): Markwon {

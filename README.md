@@ -92,8 +92,8 @@ switch:
 | `{id}.brightness` | host→device get/set | Settings.System (WRITE_SETTINGS) |
 | `{id}.flashlight` | host→device on/off/toggle | CameraManager torch |
 | `{id}.launcher` | host→device list/open | PackageManager |
-| `{id}.sms` | host→device request (read-only) | Telephony.Sms (READ_SMS) |
-| `{id}.calls` | host→device request (read-only) | CallLog (READ_CALL_LOG) |
+| `{id}.sms` | host→device inbox search; `send` needs an on-phone tap | Telephony.Sms (READ_SMS), SmsManager (SEND_SMS) |
+| `{id}.calls` | host→device call log; `dial` needs an on-phone tap | CallLog (READ_CALL_LOG), TelecomManager (CALL_PHONE) |
 | `{id}.calendar` | host→device read/add | CalendarContract |
 
 Request/response schemas, limits and permission mapping for every capability:
@@ -101,6 +101,8 @@ Request/response schemas, limits and permission mapping for every capability:
 Kernel-side work required for the next product milestones (CLI-free pairing,
 per-device keys, chat streaming, assistant sessions):
 [docs/CLIENT_DRIVEN_KERNEL_TASKS.md](docs/CLIENT_DRIVEN_KERNEL_TASKS.md).
+Approval-gated SMS/calls, chat lifecycle fixes and what is next:
+[docs/D14_UX_AND_PHONE_ACTIONS.md](docs/D14_UX_AND_PHONE_ACTIONS.md).
 Sensitive grants (SMS/calls/calendar/nearby-devices/brightness/DND) are never
 requested at service start — they are opt-in per capability from
 **Settings → Capabilities**, and each provider re-checks its grant on every call.

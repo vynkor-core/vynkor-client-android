@@ -19,7 +19,6 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -58,6 +57,8 @@ import dev.vynkor.agent.agent.Attachment
 import dev.vynkor.agent.agent.AttachmentStore
 import dev.vynkor.agent.agent.Chat
 import dev.vynkor.agent.agent.ChatMessage
+import dev.vynkor.agent.agent.ChatRequests
+import dev.vynkor.agent.agent.ChatRequests.Reply
 import dev.vynkor.agent.agent.ChatStore
 import dev.vynkor.agent.agent.HostProfile
 import dev.vynkor.agent.agent.ProfileStore
@@ -96,11 +97,16 @@ class ChatActivity : AppCompatActivity() {
     private lateinit var binding: ActivityChatBinding
     private var profile: HostProfile? = null
     private lateinit var chat: Chat
-    private var busy = false
 
-    /** Set by the composer Stop button; the pending reply is then dropped. */
-    @Volatile
-    private var generationAborted = false
+    /**
+     * A request is in flight. It lives in [ChatRequests], not here, so a
+     * rotation mid-request no longer drops the host's reply.
+     */
+    private val busy: Boolean get() = ChatRequests.inFlight.value != null
+
+    private val replyListener = ChatRequests.Listener { profileId, chatId, reply ->
+        onReply(profileId, chatId, reply)
+    }
     private var tts: TtsEngine? = null
 
     private var hostModels: List<AiModel> = emptyList()
@@ -230,6 +236,7 @@ class ChatActivity : AppCompatActivity() {
             onSpeak = { toggleSpeak(it) },
             onTypingTap = { skipTypewriter() },
             onAttachmentTap = { chatId, attachment -> openAttachment(chatId, attachment) },
+            onRetry = { retryAfterError(it) },
         )
         list.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         list.adapter = adapter
@@ -383,7 +390,8 @@ class ChatActivity : AppCompatActivity() {
                     is HostStatus.Unreachable -> R.color.unreachable
                     is HostStatus.Idle -> R.color.disconnected
                 }
-                binding.drawerStatusDot.setTextColor(ContextCompat.getColor(this@ChatActivity, colorRes))
+                binding.drawerStatusDot.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(ContextCompat.getColor(this@ChatActivity, colorRes))
                 binding.drawerStatus.text =
                     if (st is HostStatus.Unreachable) getString(R.string.status_unreachable_fmt, st.reason.take(48))
                     else getString(
@@ -413,6 +421,14 @@ class ChatActivity : AppCompatActivity() {
         }
 
         binding.ttsStop.setOnClickListener { stopSpeaking() }
+
+        // Replies (and the busy state) outlive this activity instance; a
+        // recreated one picks both up here — plus any unanswered confirm.
+        ChatRequests.attach(replyListener)
+        lifecycleScope.launch {
+            ChatRequests.inFlight.collect { setBusyUi() }
+        }
+        showPendingConfirm()
     }
 
     override fun onStart() {
@@ -445,8 +461,11 @@ class ChatActivity : AppCompatActivity() {
     /** R-18: rotation recreates the activity — keep the open chat + draft. */
     private fun restoreState(state: Bundle?) {
         state?.getString(STATE_CHAT_ID)?.let { chatId ->
-            profile?.let { p -> ChatStore.load(this, p.id, chatId) }?.let { loadChat(it) }
+            // An unsent new chat is not in the store yet — keep its id, the
+            // pending attachments below are filed under it.
+            loadChat(profile?.let { p -> ChatStore.load(this, p.id, chatId) } ?: Chat(id = chatId))
         }
+        state?.let { restorePendingAttachments(it) }
         state?.getString(STATE_DRAFT)?.let { draft ->
             binding.input.setText(draft)
             binding.input.setSelection(draft.length)
@@ -471,7 +490,8 @@ class ChatActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString(STATE_DRAFT, binding.input.text?.toString())
-        if (chat.messages.isNotEmpty()) outState.putString(STATE_CHAT_ID, chat.id)
+        outState.putString(STATE_CHAT_ID, chat.id)
+        savePendingAttachments(outState)
         if (searchQuery.isNotBlank()) outState.putString(STATE_SEARCH, searchQuery)
     }
 
@@ -481,7 +501,11 @@ class ChatActivity : AppCompatActivity() {
         partialJob?.cancel()
         partialJob = null
         sttSession = null
-        discardPendingAttachments()
+        ChatRequests.detach(replyListener)
+        confirmDialog?.dismiss()
+        confirmDialog = null
+        // Rotation keeps the unsent attachments (restored from the bundle).
+        if (!isChangingConfigurations) discardPendingAttachments()
         if (recorder.isRecording()) {
             recorder.stop()
         }
@@ -892,6 +916,29 @@ class ChatActivity : AppCompatActivity() {
         updateComposerButtons()
     }
 
+    private fun savePendingAttachments(out: Bundle) {
+        if (pendingAttachments.isEmpty()) return
+        out.putStringArrayList(STATE_ATT_IDS, ArrayList(pendingAttachments.map { it.id }))
+        out.putStringArrayList(STATE_ATT_NAMES, ArrayList(pendingAttachments.map { it.name }))
+        out.putStringArrayList(STATE_ATT_MIMES, ArrayList(pendingAttachments.map { it.mime }))
+        out.putLongArray(STATE_ATT_SIZES, pendingAttachments.map { it.sizeBytes }.toLongArray())
+    }
+
+    private fun restorePendingAttachments(state: Bundle) {
+        val ids = state.getStringArrayList(STATE_ATT_IDS) ?: return
+        val names = state.getStringArrayList(STATE_ATT_NAMES) ?: return
+        val mimes = state.getStringArrayList(STATE_ATT_MIMES) ?: return
+        val sizes = state.getLongArray(STATE_ATT_SIZES) ?: return
+        ids.indices.forEach { i ->
+            val attachment = Attachment(ids[i], names[i], mimes[i], sizes[i])
+            // Skip entries whose bytes are gone (e.g. swept after process death).
+            if (AttachmentStore.fileFor(this, chat.id, attachment).exists()) {
+                pendingAttachments.add(attachment)
+            }
+        }
+        renderPendingAttachmentChips()
+    }
+
     private fun clearPendingAttachmentChips() {
         pendingAttachments.clear()
         binding.pendingAttachments.removeAllViews()
@@ -956,6 +1003,7 @@ class ChatActivity : AppCompatActivity() {
         adapter.submit(chat.messages)
         refreshTitle()
         updateWelcome()
+        setBusyUi()
         drawer.closeDrawers()
         val draft = drafts[chat.id].orEmpty()
         if (binding.input.text?.toString() != draft) {
@@ -1158,20 +1206,6 @@ class ChatActivity : AppCompatActivity() {
         }
     }
 
-    /** What one host round-trip produced. */
-    private sealed interface Reply {
-        data class Text(val content: String) : Reply
-        data class Confirm(val goalId: String, val tool: String) : Reply
-        data class Error(val message: String) : Reply
-    }
-
-    /**
-     * Bumped per request: a reply whose sequence is stale (the user hit Stop
-     * and sent again) is dropped instead of landing in the new exchange and
-     * resetting its busy state.
-     */
-    private var requestSeq = 0
-
     private fun requestCompletion() {
         if (busy) return
         val active = profile ?: return
@@ -1183,31 +1217,19 @@ class ChatActivity : AppCompatActivity() {
     }
 
     /**
-     * Runs [call] off the main thread under the busy UI and delivers its
-     * reply to chat [chatId] — which need not be the open one any more.
+     * Runs [call] off the main thread (in [ChatRequests], so it survives
+     * rotation) and delivers its reply to chat [chatId] — which need not be
+     * the open one any more. Busy UI follows [ChatRequests.inFlight].
      */
     private fun runRequest(profileId: String, chatId: String, call: () -> Reply) {
-        val seq = ++requestSeq
-        busy = true
-        generationAborted = false
-        setBusyUi(true)
-        lifecycleScope.launch {
-            val reply = withContext(Dispatchers.IO) {
-                runCatching(call).getOrElse { e ->
-                    Reply.Error(e.message ?: getString(R.string.ai_error))
-                }
-            }
-            if (seq != requestSeq || generationAborted) return@launch // Stop: UI already reset
-            busy = false
-            setBusyUi(false)
-            when (reply) {
-                is Reply.Text -> deliver(profileId, chatId, ChatMessage("assistant", reply.content))
-                is Reply.Error -> {
-                    deliver(profileId, chatId, ChatMessage("error", reply.message))
-                    dev.vynkor.agent.agent.EventLog.push("ai", "completion failed: ${reply.message}")
-                }
-                is Reply.Confirm -> confirmAgentTool(profileId, chatId, reply)
-            }
+        ChatRequests.start(this, profileId, chatId, getString(R.string.ai_error), call)
+    }
+
+    private fun onReply(profileId: String, chatId: String, reply: Reply) {
+        when (reply) {
+            is Reply.Text -> deliver(profileId, chatId, ChatMessage("assistant", reply.content))
+            is Reply.Error -> deliver(profileId, chatId, ChatMessage("error", reply.message))
+            is Reply.Confirm -> showPendingConfirm()
         }
     }
 
@@ -1255,23 +1277,34 @@ class ChatActivity : AppCompatActivity() {
             }
     }
 
-    /** The agent halted before a tool marked requires_confirmation. */
-    private fun confirmAgentTool(profileId: String, chatId: String, pending: Reply.Confirm) {
-        if (isFinishing || isDestroyed) return
+    /**
+     * The agent halted before a tool marked requires_confirmation. The
+     * prompt stays parked in [ChatRequests] until answered, so a dialog that
+     * rotation dismissed is shown again instead of stalling the goal.
+     */
+    private fun showPendingConfirm() {
+        val pending = ChatRequests.pendingConfirm ?: return
+        if (isFinishing || isDestroyed || confirmDialog?.isShowing == true) return
         fun resume(approve: Boolean) {
+            confirmDialog = null
+            // Offline: keep the confirm parked so the next screen asks again
+            // instead of the goal stalling host-side forever.
             val agent = AgentHolder.agent ?: run { snack(getString(R.string.not_connected)); return }
-            runRequest(profileId, chatId) {
-                goalReply(AiClient.goalResume(agent, pending.goalId, approve))
+            val taken = ChatRequests.takeConfirm(pending.confirm.goalId) ?: return
+            runRequest(taken.profileId, taken.chatId) {
+                goalReply(AiClient.goalResume(agent, taken.confirm.goalId, approve))
             }
         }
-        MaterialAlertDialogBuilder(this)
+        confirmDialog = MaterialAlertDialogBuilder(this)
             .setTitle(R.string.agent_confirm_title)
-            .setMessage(getString(R.string.agent_confirm_message, pending.tool))
+            .setMessage(getString(R.string.agent_confirm_message, pending.confirm.tool))
             .setCancelable(false)
             .setPositiveButton(R.string.agent_confirm_allow) { _, _ -> resume(true) }
             .setNegativeButton(R.string.agent_confirm_deny) { _, _ -> resume(false) }
             .show()
     }
+
+    private var confirmDialog: androidx.appcompat.app.AlertDialog? = null
 
     /** user/assistant turns only — local error bubbles never go to the host. */
     private fun conversation(target: Chat): List<ChatMessage> =
@@ -1303,11 +1336,7 @@ class ChatActivity : AppCompatActivity() {
      * docs/CLIENT_DRIVEN_KERNEL_TASKS.md).
      */
     private fun abortGeneration() {
-        if (!busy) return
-        generationAborted = true
-        busy = false
-        setBusyUi(false)
-        snack(R.string.generation_stopped)
+        if (ChatRequests.abort()) snack(R.string.generation_stopped)
     }
 
     /** System-role block: project name + project files + last user attachments. */
@@ -1406,10 +1435,23 @@ class ChatActivity : AppCompatActivity() {
     private fun regenerateAt(message: ChatMessage) {
         if (busy || message.role != "assistant") return
         aiConfigErrorOrNull()?.let {
-            appendMessage(ChatMessage("error", it))
+            snack(it)
             return
         }
         stopSpeaking()
+        val idx = chat.messages.indexOfFirst { it.id == message.id }
+        if (idx < 0) return
+        updateMessages { it.take(idx) }
+        requestCompletion()
+    }
+
+    /** Error bubble Retry: drop the failed turn and ask again. */
+    private fun retryAfterError(message: ChatMessage) {
+        if (busy || message.role != "error") return
+        aiConfigErrorOrNull()?.let {
+            snack(it)
+            return
+        }
         val idx = chat.messages.indexOfFirst { it.id == message.id }
         if (idx < 0) return
         updateMessages { it.take(idx) }
@@ -1438,8 +1480,13 @@ class ChatActivity : AppCompatActivity() {
         adapter.finishTyping()
     }
 
-    private fun setBusyUi(b: Boolean) {
-        binding.typing.visibility = if (b) View.VISIBLE else View.GONE
+    private fun setBusyUi() {
+        // Dots only under the chat that is waiting; Stop stays global since a
+        // second request cannot start meanwhile.
+        val waitingHere = ChatRequests.inFlight.value?.let {
+            it.chatId == chat.id && it.profileId == profile?.id
+        } == true
+        binding.typing.visibility = if (waitingHere) View.VISIBLE else View.GONE
         updateToolbarProgress()
         updateComposerButtons()
     }
@@ -1578,7 +1625,7 @@ class ChatActivity : AppCompatActivity() {
         ProfileStore.save(this, updated)
         refreshModelChip()
         val label = if (target == HostProfile.CHAT_TARGET_AGENT) getString(R.string.chat_target_agent) else modelId.orEmpty()
-        Toast.makeText(this, getString(R.string.model_switched, label), Toast.LENGTH_SHORT).show()
+        snack(getString(R.string.model_switched, label), Snackbar.LENGTH_SHORT)
     }
 
     // ------------------------------------------------------- message actions
@@ -1660,13 +1707,16 @@ class ChatActivity : AppCompatActivity() {
         )
         ChatStore.save(this, active.id, branch)
         loadChat(branch)
-        Toast.makeText(this, R.string.fork_created, Toast.LENGTH_SHORT).show()
+        snack(R.string.fork_created)
     }
 
     private fun copyMessage(message: ChatMessage) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText(getString(R.string.copy_message), message.content))
-        Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
+        // Android 13+ shows its own clipboard confirmation — ours doubled it.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            snack(R.string.copied)
+        }
     }
 
     /**
@@ -1918,6 +1968,10 @@ class ChatActivity : AppCompatActivity() {
         private const val STATE_DRAFT = "state_draft"
         private const val STATE_CHAT_ID = "state_chat_id"
         private const val STATE_SEARCH = "state_search"
+        private const val STATE_ATT_IDS = "state_att_ids"
+        private const val STATE_ATT_NAMES = "state_att_names"
+        private const val STATE_ATT_MIMES = "state_att_mimes"
+        private const val STATE_ATT_SIZES = "state_att_sizes"
 
         /** Widget/shortcut deep actions (voice or camera right after unlock). */
         const val EXTRA_AUTO_ACTION = "auto_action"

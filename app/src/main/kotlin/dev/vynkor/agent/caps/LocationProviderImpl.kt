@@ -34,6 +34,12 @@ class LocationProviderImpl(context: Context) : LocationProvider {
         )
     }
 
+    override fun unavailableReason(): String? = when {
+        !isGranted() -> "location permission not granted on the device"
+        !androidx.core.location.LocationManagerCompat.isLocationEnabled(lm) -> "location services are turned off on the device"
+        else -> null
+    }
+
     /** Approximate-only grants are valid too (Android 12+ lets users pick them). */
     private fun isGranted(): Boolean = listOf(
         Manifest.permission.ACCESS_FINE_LOCATION,

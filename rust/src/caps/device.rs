@@ -279,8 +279,26 @@ pub fn sms(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Value, Stri
     let Some(p) = agent.sms_provider() else {
         return Err("sms provider not registered".into());
     };
-    if req.action.as_str() != "inbox" && !req.action.is_empty() {
-        return Err(format!("unknown sms action `{}`", req.action));
+    match req.action.as_str() {
+        "inbox" | "" => {}
+        "send" => {
+            let p_params = params(req);
+            let to = phone_number_param(&p_params, "to")?;
+            let text = str_param(&p_params, "text");
+            if text.trim().is_empty() {
+                return Err(r#"sms send requires {"text": "..."}"#.into());
+            }
+            if text.chars().count() > SMS_MAX_CHARS {
+                return Err(format!(
+                    "sms text is longer than {SMS_MAX_CHARS} characters"
+                ));
+            }
+            return confirmed(
+                p.send(to, text),
+                serde_json::json!({ "ok": true, "sent": true }),
+            );
+        }
+        other => return Err(format!("unknown sms action `{other}`")),
     }
     let p_params = params(req);
     let query = str_param(&p_params, "query");
@@ -305,8 +323,16 @@ pub fn calls(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Value, St
     let Some(p) = agent.calls_provider() else {
         return Err("calls provider not registered".into());
     };
-    if req.action.as_str() != "recent" && !req.action.is_empty() {
-        return Err(format!("unknown calls action `{}`", req.action));
+    match req.action.as_str() {
+        "recent" | "" => {}
+        "dial" => {
+            let number = phone_number_param(&params(req), "number")?;
+            return confirmed(
+                p.dial(number),
+                serde_json::json!({ "ok": true, "dialing": true }),
+            );
+        }
+        other => return Err(format!("unknown calls action `{other}`")),
     }
     let limit = clamp_limit(u64_param(&params(req), "limit"), CALLS_MAX_LIMIT);
     let entries: Vec<serde_json::Value> = p
@@ -323,6 +349,40 @@ pub fn calls(agent: &Agent, req: &ActionRequest) -> Result<serde_json::Value, St
         })
         .collect();
     Ok(serde_json::Value::Array(entries))
+}
+
+/// Longest SMS body accepted: 10 concatenated GSM-7 segments.
+const SMS_MAX_CHARS: usize = 1530;
+
+/// A dialable number: digits with an optional leading `+`; spaces, dashes and
+/// parentheses are dropped. Anything else (USSD `*#`, letters) is refused so
+/// a caller cannot smuggle service codes through `dial`.
+fn phone_number_param(p: &serde_json::Value, key: &str) -> Result<String, String> {
+    let raw = str_param(p, key);
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !matches!(c, ' ' | '-' | '(' | ')'))
+        .collect();
+    let digits = cleaned.strip_prefix('+').unwrap_or(&cleaned);
+    if digits.len() < 3 || digits.len() > 15 || !digits.chars().all(|c| c.is_ascii_digit()) {
+        return Err(format!(
+            r#"requires {{"{key}": "<phone number>"}}, got `{raw}`"#
+        ));
+    }
+    Ok(cleaned)
+}
+
+fn confirmed(
+    result: crate::ffi::ConfirmedActionResult,
+    ok: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    match result {
+        crate::ffi::ConfirmedActionResult::Done => Ok(ok),
+        crate::ffi::ConfirmedActionResult::Declined { reason } => {
+            Err(format!("declined on the device: {reason}"))
+        }
+        crate::ffi::ConfirmedActionResult::Failed { reason } => Err(reason),
+    }
 }
 
 // ---------------------------------------------------------------- calendar
@@ -666,6 +726,9 @@ mod tests {
                 })
                 .collect()
         }
+        fn send(&self, _to: String, _text: String) -> crate::ffi::ConfirmedActionResult {
+            crate::ffi::ConfirmedActionResult::Done
+        }
     }
 
     struct FakeCalls;
@@ -680,6 +743,11 @@ mod tests {
                     duration_s: 30,
                 })
                 .collect()
+        }
+        fn dial(&self, _number: String) -> crate::ffi::ConfirmedActionResult {
+            crate::ffi::ConfirmedActionResult::Declined {
+                reason: "denied".into(),
+            }
         }
     }
 
@@ -958,6 +1026,67 @@ mod tests {
         let arr: Vec<serde_json::Value> = serde_json::from_str(&body).unwrap();
         assert_eq!(arr.len(), 3);
         assert_eq!(arr[0]["type"], "incoming");
+    }
+
+    /// Records what reached the provider; answers with a fixed outcome.
+    struct RecordingSms {
+        sent: Mutex<Vec<(String, String)>>,
+    }
+    impl crate::ffi::SmsProvider for RecordingSms {
+        fn inbox(&self, _query: String, _limit: u32) -> Vec<SmsMessage> {
+            Vec::new()
+        }
+        fn send(&self, to: String, text: String) -> crate::ffi::ConfirmedActionResult {
+            self.sent.lock().unwrap().push((to, text));
+            crate::ffi::ConfirmedActionResult::Done
+        }
+    }
+
+    #[test]
+    fn sms_send_validates_and_normalises_before_the_provider() {
+        let fake = std::sync::Arc::new(RecordingSms {
+            sent: Mutex::new(Vec::new()),
+        });
+        let f = fake.clone();
+        let agent = agent_with(move |a| a.set_sms(f));
+
+        let (status, body) = dispatch(
+            &agent,
+            "sms",
+            request(
+                "send",
+                serde_json::json!({ "to": "+998 (90) 174-11-45", "text": "hi" }),
+            ),
+        );
+        assert_eq!(status, OK, "{body}");
+        assert_eq!(fake.sent.lock().unwrap()[0].0, "+998901741145");
+
+        // USSD / letters / empty text never reach the provider.
+        for bad in [
+            serde_json::json!({ "to": "*100#", "text": "x" }),
+            serde_json::json!({ "to": "abc", "text": "x" }),
+            serde_json::json!({ "to": "+998901741145", "text": "  " }),
+            serde_json::json!({ "to": "+998901741145", "text": "x".repeat(SMS_MAX_CHARS + 1) }),
+        ] {
+            let (status, _) = dispatch(&agent, "sms", request("send", bad));
+            assert_eq!(status, ERR);
+        }
+        assert_eq!(fake.sent.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn calls_dial_denied_on_device_is_an_error() {
+        let agent = agent_with(|a| a.set_calls(std::sync::Arc::new(FakeCalls)));
+        let (status, body) = dispatch(
+            &agent,
+            "calls",
+            request("dial", serde_json::json!({ "number": "+998901741145" })),
+        );
+        assert_eq!(status, ERR);
+        assert!(body.contains("declined on the device"), "{body}");
+
+        let (status, _) = dispatch(&agent, "calls", request("dial", serde_json::json!({})));
+        assert_eq!(status, ERR);
     }
 
     #[test]

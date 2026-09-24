@@ -13,24 +13,20 @@ pub mod device;
 pub fn handle_action_request(agent: &Agent, cap: &str, mut req: ActionRequest) -> Envelope {
     req.action = sub_action(cap, &req);
     let action_id = req.action_id.clone();
-    let resp = match cap {
-        "battery" => action_battery(agent, &req),
-        "geo" => action_geo(agent, &req),
-        "clipboard" => action_clipboard(agent, &req),
-        "contacts" => action_contacts(agent, &req),
-        "device" => device::device_info(agent),
-        "wifi" => device::wifi(agent, &req),
-        "bluetooth" => device::bluetooth(agent, &req),
-        "dnd" => device::dnd(agent, &req),
-        "ringer" => device::ringer(agent, &req),
-        "brightness" => device::brightness(agent, &req),
-        "flashlight" => device::flashlight(agent, &req),
-        "launcher" => device::launcher(agent, &req),
-        "sms" => device::sms(agent, &req),
-        "calls" => device::calls(agent, &req),
-        "calendar" => device::calendar(agent, &req),
-        _ => Err(format!("unknown capability `{cap}`")),
-    };
+    // A Kotlin provider that throws surfaces here as a UniFFI panic. Unwound
+    // on the blocking thread it used to drop the reply entirely — the host
+    // only saw its own timeout. Turn it into an ActionError instead.
+    let resp =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| dispatch(agent, cap, &req)))
+            .unwrap_or_else(|panic| {
+                let what = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                tracing::error!(cap, what, "capability provider failed");
+                Err(format!("{cap} provider failed: {what}"))
+            });
     let (status, data_json, error) = match resp {
         Ok(json) => (
             ActionStatus::ActionOk,
@@ -47,6 +43,27 @@ pub fn handle_action_request(agent: &Agent, cap: &str, mut req: ActionRequest) -
             error,
         })),
         ..Default::default()
+    }
+}
+
+fn dispatch(agent: &Agent, cap: &str, req: &ActionRequest) -> Result<serde_json::Value, String> {
+    match cap {
+        "battery" => action_battery(agent, req),
+        "geo" => action_geo(agent, req),
+        "clipboard" => action_clipboard(agent, req),
+        "contacts" => action_contacts(agent, req),
+        "device" => device::device_info(agent),
+        "wifi" => device::wifi(agent, req),
+        "bluetooth" => device::bluetooth(agent, req),
+        "dnd" => device::dnd(agent, req),
+        "ringer" => device::ringer(agent, req),
+        "brightness" => device::brightness(agent, req),
+        "flashlight" => device::flashlight(agent, req),
+        "launcher" => device::launcher(agent, req),
+        "sms" => device::sms(agent, req),
+        "calls" => device::calls(agent, req),
+        "calendar" => device::calendar(agent, req),
+        _ => Err(format!("unknown capability `{cap}`")),
     }
 }
 
@@ -103,7 +120,11 @@ fn action_geo(agent: &Agent, _req: &ActionRequest) -> Result<serde_json::Value, 
             "lon": loc.lon,
             "accuracy_m": loc.accuracy_m,
         })),
-        None => Err("no location fix yet".into()),
+        // "no fix yet" sent callers waiting for a fix that could never come
+        // while location services were switched off.
+        None => Err(p
+            .unavailable_reason()
+            .unwrap_or_else(|| "no location fix yet".into())),
     }
 }
 
@@ -175,12 +196,57 @@ mod tests {
     #[test]
     fn sub_action_from_bare_verb_suffix_or_params() {
         assert_eq!(sub_action("flashlight", &req("on", "{}")), "on");
-        assert_eq!(sub_action("flashlight", &req("my-phone.flashlight.toggle", "{}")), "toggle");
         assert_eq!(
-            sub_action("flashlight", &req("my-phone.flashlight", r#"{"action":"off"}"#)),
+            sub_action("flashlight", &req("my-phone.flashlight.toggle", "{}")),
+            "toggle"
+        );
+        assert_eq!(
+            sub_action(
+                "flashlight",
+                &req("my-phone.flashlight", r#"{"action":"off"}"#)
+            ),
             "off"
         );
         // Full name without a verb → "" = the capability's default verb.
-        assert_eq!(sub_action("flashlight", &req("my-phone.flashlight", "{}")), "");
+        assert_eq!(
+            sub_action("flashlight", &req("my-phone.flashlight", "{}")),
+            ""
+        );
+    }
+
+    struct ThrowingCalls;
+    impl crate::ffi::CallsProvider for ThrowingCalls {
+        fn recent(&self, _limit: u32) -> Vec<crate::ffi::CallLogEntry> {
+            panic!("IllegalArgumentException: Invalid token LIMIT");
+        }
+        fn dial(&self, _number: String) -> crate::ffi::ConfirmedActionResult {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn throwing_provider_yields_action_error_not_silence() {
+        let agent = Agent::new(crate::ffi::AgentConfig {
+            host_url: "ws://127.0.0.1:9".into(),
+            jwt_token: String::new(),
+            device_secret: String::new(),
+            cert_pem: String::new(),
+            device_id: "test-device".into(),
+            capabilities: Vec::new(),
+            os_version: "14".into(),
+            arch: "x86_64".into(),
+            user_id: "default".into(),
+        });
+        agent.set_calls(std::sync::Arc::new(ThrowingCalls));
+        let mut r = req("test-device.calls", "{}");
+        r.action_id = "a1".into();
+        let Some(envelope::Payload::ActionResponse(resp)) =
+            handle_action_request(&agent, "calls", r).payload
+        else {
+            panic!("expected an ActionResponse");
+        };
+        assert_eq!(resp.action_id, "a1");
+        assert_eq!(resp.status, ActionStatus::ActionError as i32);
+        assert!(resp.error.contains("Invalid token LIMIT"), "{}", resp.error);
     }
 }
