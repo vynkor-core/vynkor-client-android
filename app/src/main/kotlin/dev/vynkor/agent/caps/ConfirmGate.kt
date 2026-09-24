@@ -41,6 +41,13 @@ object ConfirmGate {
     }
 
     const val TIMEOUT_MS = 20_000L
+
+    /**
+     * Whole approved action — prompt plus the work after Allow — must end
+     * inside this: the kernel's 30 s default minus transport margin. A result
+     * that lands after the host gave up invites a duplicate retry.
+     */
+    const val ACTION_BUDGET_MS = 27_000L
     private const val CHANNEL = "vynkor_confirm"
     internal const val EXTRA_ID = "confirm_id"
     internal const val EXTRA_APPROVE = "confirm_approve"

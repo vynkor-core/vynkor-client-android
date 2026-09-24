@@ -1287,8 +1287,10 @@ class ChatActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed || confirmDialog?.isShowing == true) return
         fun resume(approve: Boolean) {
             confirmDialog = null
-            val taken = ChatRequests.takeConfirm(pending.confirm.goalId) ?: return
+            // Offline: keep the confirm parked so the next screen asks again
+            // instead of the goal stalling host-side forever.
             val agent = AgentHolder.agent ?: run { snack(getString(R.string.not_connected)); return }
+            val taken = ChatRequests.takeConfirm(pending.confirm.goalId) ?: return
             runRequest(taken.profileId, taken.chatId) {
                 goalReply(AiClient.goalResume(agent, taken.confirm.goalId, approve))
             }

@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import android.provider.Telephony
 import android.telephony.SmsManager
 import androidx.core.content.ContextCompat
@@ -70,6 +71,7 @@ class SmsProviderImpl(context: Context) : SmsProvider {
             return ConfirmedActionResult.Failed("SEND_SMS not granted on the device")
         }
         val sms = smsManager() ?: return ConfirmedActionResult.Failed("SMS is not available on this device")
+        val deadline = SystemClock.elapsedRealtime() + ConfirmGate.ACTION_BUDGET_MS
         // The number goes in the body: a title would ellipsize it, and the
         // user must see exactly where the message is going.
         val answer = ConfirmGate.ask(
@@ -78,16 +80,17 @@ class SmsProviderImpl(context: Context) : SmsProvider {
             ctx.getString(R.string.confirm_sms_body, to, text),
         )
         if (answer is ConfirmGate.Answer.Denied) return ConfirmedActionResult.Declined(answer.reason)
-        return runCatching { sendAndAwait(sms, to, text) }
+        return runCatching { sendAndAwait(sms, to, text, deadline) }
             .getOrElse { ConfirmedActionResult.Failed("sms send failed: ${it.message ?: it.javaClass.simpleName}") }
     }
 
     /**
      * Hands the parts to the radio and waits briefly for its per-part result.
      * No verdict in time still counts as sent: the platform has queued it,
-     * and reporting failure would invite the caller to send a duplicate.
+     * and reporting failure would invite the caller to send a duplicate. The
+     * wait is cut to what is left of [deadline] after a slow approval.
      */
-    private fun sendAndAwait(sms: SmsManager, to: String, text: String): ConfirmedActionResult {
+    private fun sendAndAwait(sms: SmsManager, to: String, text: String, deadline: Long): ConfirmedActionResult {
         val parts = sms.divideMessage(text)
         val action = "${ctx.packageName}.SMS_SENT.${sendSeq.incrementAndGet()}"
         val done = CountDownLatch(parts.size)
@@ -111,7 +114,8 @@ class SmsProviderImpl(context: Context) : SmsProvider {
                 },
             )
             sms.sendMultipartTextMessage(to, null, parts, sent, null)
-            done.await(SEND_RESULT_WAIT_MS, TimeUnit.MILLISECONDS)
+            val wait = (deadline - SystemClock.elapsedRealtime()).coerceIn(0L, SEND_RESULT_WAIT_MS)
+            done.await(wait, TimeUnit.MILLISECONDS)
         } finally {
             ctx.unregisterReceiver(receiver)
         }
