@@ -26,6 +26,11 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- Host-requested SMS/calls; each one still needs an on-phone tap
+         (caps/ConfirmGate). -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <uses-permission
@@ -172,6 +177,12 @@
         </service>
 
         <!-- Home-screen status widget (IDEAS #17): state + start/stop. -->
+        <!-- Allow/Deny answers from the approval notification; our own
+             PendingIntents only, hence not exported. -->
+        <receiver
+            android:name=".caps.ConfirmReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".AgentStatusWidget"
             android:exported="false">

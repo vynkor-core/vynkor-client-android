@@ -219,6 +219,9 @@ mod tests {
         fn recent(&self, _limit: u32) -> Vec<crate::ffi::CallLogEntry> {
             panic!("IllegalArgumentException: Invalid token LIMIT");
         }
+        fn dial(&self, _number: String) -> crate::ffi::ConfirmedActionResult {
+            unreachable!()
+        }
     }
 
     #[test]

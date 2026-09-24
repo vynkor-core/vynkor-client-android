@@ -364,4 +364,16 @@
     <string name="settings_section_personal">Персонализация</string>
     <string name="settings_section_privacy">Приватность и данные</string>
     <string name="settings_section_other">Прочее</string>
+    <string name="confirm_channel_name">Подтверждение действий</string>
+    <string name="confirm_allow">Разрешить</string>
+    <string name="confirm_deny">Отклонить</string>
+    <string name="confirm_public_title">vynkor: нужно ваше подтверждение</string>
+    <string name="confirm_sms_title">Отправить SMS?</string>
+    <string name="confirm_sms_body">Кому: %1$s\n%2$s</string>
+    <string name="confirm_call_title">Позвонить?</string>
+    <string name="confirm_call_body">Номер: %1$s\nЗапрос от хоста. Без вашего разрешения ничего не произойдёт.</string>
+    <string name="perm_sms_send_title">Отправка SMS</string>
+    <string name="perm_sms_send_subtitle">хост отправляет только после вашего подтверждения</string>
+    <string name="perm_call_title">Звонки</string>
+    <string name="perm_call_subtitle">хост звонит только после вашего подтверждения</string>
 </resources>

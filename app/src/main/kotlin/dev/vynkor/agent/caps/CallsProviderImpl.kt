@@ -3,13 +3,19 @@ package dev.vynkor.agent.caps
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Bundle
 import android.provider.CallLog
+import android.telecom.TelecomManager
 import androidx.core.content.ContextCompat
 import dev.vynkor.agent.CallLogEntry
 import dev.vynkor.agent.CallsProvider
+import dev.vynkor.agent.ConfirmedActionResult
+import dev.vynkor.agent.R
 
 /**
- * Read-only call log. R-05/R-10: hard LIMIT, per-call permission check.
+ * Call log plus approval-gated dialing. R-05/R-10: hard LIMIT, per-call
+ * permission check; every call also needs the user's tap ([ConfirmGate]).
  */
 class CallsProviderImpl(context: Context) : CallsProvider {
     private val ctx = context.applicationContext
@@ -55,9 +61,32 @@ class CallsProviderImpl(context: Context) : CallsProvider {
         else -> "other"
     }
 
-    private fun granted(): Boolean =
-        ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_CALL_LOG) ==
-            PackageManager.PERMISSION_GRANTED
+    /**
+     * TelecomManager.placeCall, not an ACTION_CALL activity: the request comes
+     * in while the app is usually in the background, where Android blocks
+     * activity starts but still lets a CALL_PHONE holder place calls.
+     */
+    override fun dial(number: String): ConfirmedActionResult {
+        if (!granted(Manifest.permission.CALL_PHONE)) {
+            return ConfirmedActionResult.Failed("CALL_PHONE not granted on the device")
+        }
+        val telecom = ctx.getSystemService(TelecomManager::class.java)
+            ?: return ConfirmedActionResult.Failed("telephony is not available on this device")
+        val answer = ConfirmGate.ask(
+            ctx,
+            ctx.getString(R.string.confirm_call_title),
+            ctx.getString(R.string.confirm_call_body, number),
+        )
+        if (answer is ConfirmGate.Answer.Denied) return ConfirmedActionResult.Declined(answer.reason)
+        return runCatching {
+            @Suppress("MissingPermission") // checked above
+            telecom.placeCall(Uri.fromParts("tel", number, null), Bundle())
+            ConfirmedActionResult.Done
+        }.getOrElse { ConfirmedActionResult.Failed("call failed: ${it.message ?: it.javaClass.simpleName}") }
+    }
+
+    private fun granted(permission: String = Manifest.permission.READ_CALL_LOG): Boolean =
+        ContextCompat.checkSelfPermission(ctx, permission) == PackageManager.PERMISSION_GRANTED
 
     private companion object {
         const val MAX_LIMIT: UInt = 100u
