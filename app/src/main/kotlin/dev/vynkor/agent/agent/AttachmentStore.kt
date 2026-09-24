@@ -3,6 +3,7 @@ package dev.vynkor.agent.agent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import java.io.File
 
@@ -46,7 +47,10 @@ object AttachmentStore {
         val mime = mimeHint?.takeIf { it.isNotBlank() }
             ?: resolver.getType(uri)
             ?: "application/octet-stream"
+        // Document-provider URIs end in an opaque id ("image:1115"), not a
+        // file name — ask the provider for the name the user sees.
         val name = displayName?.takeIf { it.isNotBlank() }
+            ?: queryDisplayName(context, uri)
             ?: uri.lastPathSegment?.substringAfterLast('/')
             ?: "file"
         val draft = Attachment(name = name, mime = mime, sizeBytes = 0)
@@ -61,6 +65,11 @@ object AttachmentStore {
         }
         draft.copy(sizeBytes = copied)
     }.getOrNull()
+
+    private fun queryDisplayName(context: Context, uri: Uri): String? = runCatching {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+    }.getOrNull()?.takeIf { it.isNotBlank() }
 
     /** Copies at most [MAX_FILE_BYTES] + 1 bytes; the caller rejects anything over. */
     internal fun copyCapped(

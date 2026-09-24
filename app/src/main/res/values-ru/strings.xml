@@ -360,4 +360,8 @@
     <string name="launch_request_title">Хост просит открыть %1$s</string>
     <string name="launch_request_text">Нажмите, чтобы открыть</string>
     <string name="pin_locked_wait_fmt">Ввод PIN заблокирован — повторите через %1$d с</string>
+    <string name="settings_section_connection">Подключение</string>
+    <string name="settings_section_personal">Персонализация</string>
+    <string name="settings_section_privacy">Приватность и данные</string>
+    <string name="settings_section_other">Прочее</string>
 </resources>

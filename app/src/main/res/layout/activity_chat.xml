@@ -343,12 +343,14 @@
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
-                <TextView
+                <!-- Real shape, not a "●" glyph: glyph size/baseline varied by font. -->
+                <View
                     android:id="@+id/drawerStatusDot"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="●"
-                    android:textSize="18sp" />
+                    android:layout_width="10dp"
+                    android:layout_height="10dp"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:background="@drawable/widget_dot" />
 
                 <TextView
                     android:id="@+id/drawerStatus"

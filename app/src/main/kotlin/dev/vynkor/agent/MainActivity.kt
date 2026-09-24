@@ -79,17 +79,17 @@ class MainActivity : AppCompatActivity() {
         bindRow(binding.rowNotifications, R.drawable.ic_notifications, R.string.notifications_title)
             .setOnClickListener { startActivity(Intent(this, NotificationFilterActivity::class.java)) }
 
-        bindRow(binding.rowCaps, R.drawable.ic_lock, R.string.caps_permissions_title)
+        bindRow(binding.rowCaps, R.drawable.ic_apps, R.string.caps_permissions_title)
             .setOnClickListener { startActivity(Intent(this, CapPermissionsActivity::class.java)) }
 
         bindRow(binding.rowAppearance, R.drawable.ic_palette, R.string.appearance_title)
             .setOnClickListener { showAppearanceDialog() }
 
-        bindRow(binding.rowLanguage, R.drawable.ic_hosts, R.string.language_title)
+        bindRow(binding.rowLanguage, R.drawable.ic_language, R.string.language_title)
             .setOnClickListener { showLanguageDialog() }
         binding.rowLanguage.rowSubtitle.text = languageSubtitle()
 
-        bindRow(binding.rowNotifLook, R.drawable.ic_notifications, R.string.notif_look_title)
+        bindRow(binding.rowNotifLook, R.drawable.ic_notif_style, R.string.notif_look_title)
             .setOnClickListener { showNotificationModeDialog() }
         binding.rowNotifLook.rowSubtitle.text = notifModeSubtitle()
 
@@ -130,7 +130,8 @@ class MainActivity : AppCompatActivity() {
                     is HostStatus.Idle ->
                         R.string.status_disconnected to R.color.disconnected
                 }
-                binding.statusDot.setTextColor(ContextCompat.getColor(this@MainActivity, colorRes))
+                binding.statusDot.backgroundTintList =
+                    android.content.res.ColorStateList.valueOf(ContextCompat.getColor(this@MainActivity, colorRes))
                 binding.statusText.text =
                     if (st is HostStatus.Unreachable) getString(textRes, st.reason)
                     else getString(textRes)

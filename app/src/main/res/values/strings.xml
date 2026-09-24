@@ -360,4 +360,8 @@
     <string name="launch_request_title">Host wants to open %1$s</string>
     <string name="launch_request_text">Tap to open</string>
     <string name="pin_locked_wait_fmt">PIN entry locked — try again in %1$d s</string>
+    <string name="settings_section_connection">Connection</string>
+    <string name="settings_section_personal">Personalization</string>
+    <string name="settings_section_privacy">Privacy &amp; data</string>
+    <string name="settings_section_other">Other</string>
 </resources>
