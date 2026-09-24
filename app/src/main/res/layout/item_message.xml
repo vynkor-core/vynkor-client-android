@@ -38,6 +38,21 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
 
+        <!-- Error-only: re-asks the host when the failed turn is the last one. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/retryAction"
+            style="@style/Widget.Material3.Button.TextButton.Icon"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/retry"
+            android:textColor="@color/error"
+            android:visibility="gone"
+            app:icon="@drawable/ic_refresh"
+            app:iconTint="@color/error"
+            app:layout_constraintStart_toStartOf="@id/messageText"
+            app:layout_constraintTop_toBottomOf="@id/messageText" />
+
         <!-- Assistant-only action footer: copy + more on the left, the speaker
              pinned to the right edge of the bubble. Hidden for user/error. -->
         <LinearLayout
