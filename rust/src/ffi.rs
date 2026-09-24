@@ -273,6 +273,21 @@ pub struct SmsMessage {
 #[uniffi::export(with_foreign)]
 pub trait SmsProvider: Send + Sync {
     fn inbox(&self, query: String, limit: u32) -> Vec<SmsMessage>;
+    /// Sends only after the user approves it on the phone; blocks until
+    /// they answer (or the prompt times out).
+    fn send(&self, to: String, text: String) -> ConfirmedActionResult;
+}
+
+/// Outcome of an outward action the user must approve on the phone first
+/// (`sms.send`, `calls.dial`) — whoever asked, host agent or script.
+#[derive(uniffi::Enum)]
+pub enum ConfirmedActionResult {
+    /// Approved and performed.
+    Done,
+    /// The user denied it, or did not answer in time.
+    Declined { reason: String },
+    /// Approved, but the platform refused (permission, no SIM, radio error).
+    Failed { reason: String },
 }
 
 /// One call-log entry.
@@ -290,6 +305,8 @@ pub struct CallLogEntry {
 #[uniffi::export(with_foreign)]
 pub trait CallsProvider: Send + Sync {
     fn recent(&self, limit: u32) -> Vec<CallLogEntry>;
+    /// Places a call after on-phone approval (see [ConfirmedActionResult]).
+    fn dial(&self, number: String) -> ConfirmedActionResult;
 }
 
 /// A calendar occurrence.

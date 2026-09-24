@@ -35,6 +35,8 @@ class CapPermissionsActivity : AppCompatActivity() {
         val minSdk: Int = 26,
         /** Non-null → row opens a system screen instead of a runtime dialog. */
         val specialIntent: ((Context) -> Intent)? = null,
+        /** Grant check for [specialIntent] rows (they have no runtime permissions). */
+        val specialGranted: ((Context) -> Boolean)? = null,
     )
 
     private val rows = listOf(
@@ -61,8 +63,16 @@ class CapPermissionsActivity : AppCompatActivity() {
             listOf(Manifest.permission.READ_SMS),
         ),
         Row(
+            R.string.perm_sms_send_title, R.string.perm_sms_send_subtitle,
+            listOf(Manifest.permission.SEND_SMS),
+        ),
+        Row(
             R.string.perm_calls_title, R.string.perm_calls_subtitle,
             listOf(Manifest.permission.READ_CALL_LOG),
+        ),
+        Row(
+            R.string.perm_call_title, R.string.perm_call_subtitle,
+            listOf(Manifest.permission.CALL_PHONE),
         ),
         Row(
             R.string.perm_calendar_title, R.string.perm_calendar_subtitle,
@@ -80,11 +90,16 @@ class CapPermissionsActivity : AppCompatActivity() {
                 i.data = Uri.fromParts("package", it.packageName, null)
                 i
             } },
+            specialGranted = { Settings.System.canWrite(it) },
         ),
         Row(
             R.string.perm_dnd_title, R.string.perm_dnd_subtitle,
             emptyList(),
             specialIntent = { Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) },
+            specialGranted = {
+                (it.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager)
+                    ?.isNotificationPolicyAccessGranted == true
+            },
         ),
     )
 
@@ -159,10 +174,13 @@ class CapPermissionsActivity : AppCompatActivity() {
         visibleRowIndexes.forEachIndexed { childPos, rowIndex ->
             val row = rows[rowIndex]
             val item = ItemSettingsRowBinding.bind(binding.rows.getChildAt(childPos))
-            val granted = row.permissions.all {
+            // Special rows have no runtime permissions — `all` over an empty
+            // list was always true, so they showed "on" while denied. Their
+            // own check decides; it used to be looked up by a row index that
+            // went stale when rows were inserted.
+            val on = row.specialGranted?.invoke(this) ?: row.permissions.all {
                 ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
             }
-            val on = granted || specialGranted(rowIndex)
             item.rowSubtitle.text = getString(
                 R.string.perm_row_subtitle_fmt,
                 getString(row.subtitleRes),
@@ -172,12 +190,5 @@ class CapPermissionsActivity : AppCompatActivity() {
                 ContextCompat.getColor(this, if (on) R.color.connected else R.color.unreachable),
             )
         }
-    }
-
-    private fun specialGranted(index: Int): Boolean = when (index) {
-        7 -> Settings.System.canWrite(this)
-        8 -> (getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager)
-            ?.isNotificationPolicyAccessGranted == true
-        else -> false
     }
 }

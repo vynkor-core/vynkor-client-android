@@ -234,6 +234,14 @@ substring match over body/sender, newest first. Response: array of
 
 `[]` when READ_SMS is not granted.
 
+Action `send` — params `{"to": "+998901234567", "text": "..."}` → `{"ok": true, "sent": true}`.
+`to`: digits with optional leading `+` (spaces, `-`, `()` stripped; 3–15 digits;
+USSD `*#` refused). `text`: non-blank, ≤ 1530 chars (split into parts on the phone).
+**Nothing is sent until the user taps Allow** on an approval notification on the
+phone (Allow needs an unlocked device). Deny, dismiss or no answer within 20 s →
+`ACTION_ERROR` `declined on the device: …`. Needs SEND_SMS (capabilities screen).
+Keep the caller's `timeout_ms` ≥ 30 s so the prompt has time to be answered.
+
 ### `{id}.calls` (sensitive)
 
 Action `recent` (default). Params: `{"limit"?: ≤100}`. Response: array of
@@ -244,6 +252,10 @@ Action `recent` (default). Params: `{"limit"?: ≤100}`. Response: array of
 ```
 
 `[]` when READ_CALL_LOG is not granted.
+
+Action `dial` — params `{"number": "+998901234567"}` → `{"ok": true, "dialing": true}`.
+Same number rules and the same on-phone approval as `sms.send`; placed via
+TelecomManager (works with the app in the background). Needs CALL_PHONE.
 
 ### `{id}.calendar` (sensitive)
 
