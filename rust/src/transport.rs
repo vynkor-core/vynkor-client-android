@@ -99,9 +99,9 @@ impl DeviceConn {
         req.headers_mut().insert("sec-websocket-protocol", value);
 
         let connector = match (url.scheme(), &params.cert_pem) {
-            ("wss", Some(pem)) => Some(tokio_tungstenite::Connector::Rustls(
-                std::sync::Arc::new(pinned_tls_config(pem)?),
-            )),
+            ("wss", Some(pem)) => Some(tokio_tungstenite::Connector::Rustls(std::sync::Arc::new(
+                pinned_tls_config(pem)?,
+            ))),
             _ => None,
         };
         let connect = async {
@@ -297,7 +297,11 @@ impl rustls::client::danger::ServerCertVerifier for PinnedCertVerifier {
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        if self.pinned.iter().any(|c| c.as_ref() == end_entity.as_ref()) {
+        if self
+            .pinned
+            .iter()
+            .any(|c| c.as_ref() == end_entity.as_ref())
+        {
             Ok(rustls::client::danger::ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::InvalidCertificate(
