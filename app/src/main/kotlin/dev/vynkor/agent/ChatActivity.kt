@@ -428,6 +428,9 @@ class ChatActivity : AppCompatActivity() {
         lifecycleScope.launch {
             ChatRequests.inFlight.collect { setBusyUi() }
         }
+        lifecycleScope.launch {
+            ChatRequests.partial.collect { renderPartial(it) }
+        }
         showPendingConfirm()
     }
 
@@ -1227,7 +1230,7 @@ class ChatActivity : AppCompatActivity() {
 
     private fun onReply(profileId: String, chatId: String, reply: Reply) {
         when (reply) {
-            is Reply.Text -> deliver(profileId, chatId, ChatMessage("assistant", reply.content))
+            is Reply.Text -> deliver(profileId, chatId, ChatMessage("assistant", reply.content), reveal = !reply.streamed)
             is Reply.Error -> deliver(profileId, chatId, ChatMessage("error", reply.message))
             is Reply.Confirm -> showPendingConfirm()
         }
@@ -1242,8 +1245,17 @@ class ChatActivity : AppCompatActivity() {
             .map { it.role to it.content.ifBlank { ATTACHMENT_ONLY } }
         val contextBlock = buildContextBlock(active.id, target)
         val messages = if (contextBlock != null) listOf("system" to contextBlock) + history else history
-        val reply = AiClient.chat(agent, active, messages, hostModels.map { it.id }.toSet())
-        return Reply.Text(reply.content)
+        // CD-03: streamed — text shows up as it is generated, and Stop ends
+        // the generation host-side instead of just hiding the reply
+        val reply = AiClient.chatStream(
+            agent,
+            active,
+            messages,
+            hostModels.map { it.id }.toSet(),
+            onDelta = { ChatRequests.appendPartial(active.id, target.id, it) },
+            onCancelable = ChatRequests::setCancelHook,
+        )
+        return Reply.Text(reply.content, streamed = true)
     }
 
     /** Agent route: the last user turn is the goal, the rest is context. */
@@ -1314,10 +1326,10 @@ class ChatActivity : AppCompatActivity() {
      * Appends a reply to the chat it belongs to. When the user switched chats
      * meanwhile it is saved into that chat instead of the one now open.
      */
-    private fun deliver(profileId: String, chatId: String, message: ChatMessage) {
+    private fun deliver(profileId: String, chatId: String, message: ChatMessage, reveal: Boolean = true) {
         if (profile?.id == profileId && chat.id == chatId) {
             appendMessage(message)
-            typewriterReveal(message)
+            if (reveal) typewriterReveal(message)
             return
         }
         val stored = ChatStore.load(this, profileId, chatId) ?: return
@@ -1336,8 +1348,33 @@ class ChatActivity : AppCompatActivity() {
      * docs/CLIENT_DRIVEN_KERNEL_TASKS.md).
      */
     private fun abortGeneration() {
-        if (ChatRequests.abort()) snack(R.string.generation_stopped)
+        // keep what the model already said; the stream is stopped host-side
+        val partial = ChatRequests.partial.value
+        if (!ChatRequests.abort()) return
+        if (partial != null && partial.text.isNotBlank()) {
+            deliver(partial.profileId, partial.chatId, ChatMessage("assistant", partial.text), reveal = false)
+        }
+        snack(R.string.generation_stopped)
     }
+
+    /** Stable id so DiffUtil updates the live bubble in place. */
+    private val liveMessageId = java.util.UUID.randomUUID().toString()
+
+    /**
+     * CD-03: shows the streaming answer as an unsaved bubble after the
+     * chat's messages; the final reply replaces it through [deliver].
+     */
+    private fun renderPartial(partial: ChatRequests.Partial?) {
+        val here = partial != null && partial.chatId == chat.id && partial.profileId == profile?.id
+        if (!here && !showingPartial) return
+        skipTypewriter()
+        showingPartial = here
+        val live = if (here) listOf(ChatMessage("assistant", partial!!.text, id = liveMessageId)) else emptyList()
+        adapter.submit(chat.messages + live)
+        if (here) binding.messages.scrollToPosition(adapter.itemCount - 1)
+    }
+
+    private var showingPartial = false
 
     /** System-role block: project name + project files + last user attachments. */
     private fun buildContextBlock(profileId: String, chat: Chat): String? {

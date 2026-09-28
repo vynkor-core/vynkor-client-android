@@ -74,6 +74,21 @@ pub struct ActionReply {
     pub error: String,
 }
 
+/// Kotlin-implemented receiver for one streaming action (CD-03), fed by the
+/// core's inbound loop. Runs on the agent's runtime thread — do not block;
+/// post to the UI thread. Exactly one of `on_closed`/`on_failed` ends the
+/// stream, and nothing follows it.
+#[uniffi::export(with_foreign)]
+pub trait StreamListener: Send + Sync {
+    /// The provider accepted the session (`ActionResponse{OK}`).
+    fn on_accepted(&self, data_json: Vec<u8>);
+    fn on_chunk(&self, seq: u32, chunk: Vec<u8>);
+    /// Normal end (`SessionClose` from the provider), with its reason.
+    fn on_closed(&self, reason: String);
+    /// Error reply, kernel abort, local send failure or dropped connection.
+    fn on_failed(&self, reply: ActionReply);
+}
+
 /// Fine-grained connection progress for the UI, emitted between the coarse
 /// connected/disconnected transitions of [AgentObserver::on_state_changed].
 #[derive(uniffi::Enum)]
