@@ -674,7 +674,12 @@ impl Agent {
         lock(&self.calendar).clone()
     }
 
-    pub(crate) fn speaker_push_pcm_internal(&self, pcm: Vec<u8>, sample_rate: u32, eos: bool) -> u64 {
+    pub(crate) fn speaker_push_pcm_internal(
+        &self,
+        pcm: Vec<u8>,
+        sample_rate: u32,
+        eos: bool,
+    ) -> u64 {
         let len = pcm.len() as u64;
         if len == 0 && !eos {
             return 0;

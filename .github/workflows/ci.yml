@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+# rust/Cargo.toml patches vynkor-wire to ../../vynkor-wire, so both repos are
+# checked out side by side, same as a local dev tree.
+jobs:
+  rust:
+    name: Rust core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: vynkor-client-android
+      - uses: actions/checkout@v4
+        with:
+          repository: vynkor-core/vynkor-wire
+          path: vynkor-wire
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # wire's build script runs prost-build
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vynkor-client-android/rust
+
+      - name: Format check
+        working-directory: vynkor-client-android/rust
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: vynkor-client-android/rust
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        working-directory: vynkor-client-android/rust
+        run: cargo test
+
+  android:
+    name: Android app
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 30.0.15729638
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: vynkor-client-android
+      - uses: actions/checkout@v4
+        with:
+          repository: vynkor-core/vynkor-wire
+          path: vynkor-wire
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install stable toolchain + Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      # compileSdk 37 + a pinned NDK; the runner's preinstalled set lags behind
+      - name: Install Android SDK components
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-37.0" "build-tools;37.0.0" "ndk;$NDK_VERSION"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vynkor-client-android/rust
+          key: android
+
+      # the gradle build shells out to both (cargoNdkBuild, uniffiBindgen);
+      # uniffi-bindgen must match the uniffi crate version in rust/Cargo.toml
+      - name: Install cargo-ndk + uniffi-bindgen
+        run: |
+          cargo install --locked cargo-ndk
+          cargo install --locked uniffi --version 0.32.0 --features cli --bin uniffi-bindgen
+
+      # only the AAR is needed to compile; the STT model is a runtime asset
+      - name: Fetch sherpa-onnx AAR
+        working-directory: vynkor-client-android
+        run: |
+          mkdir -p app/libs
+          curl -fL --retry 3 -o app/libs/sherpa-onnx-1.13.5.aar \
+            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.5/sherpa-onnx-1.13.5.aar
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests + debug APK
+        working-directory: vynkor-client-android
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: vynkor-client-android/app/build/reports/tests/
+
+      - name: Upload debug APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apks
+          path: vynkor-client-android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
