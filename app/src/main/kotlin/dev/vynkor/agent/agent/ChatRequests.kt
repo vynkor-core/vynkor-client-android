@@ -7,6 +7,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -27,12 +28,16 @@ object ChatRequests {
 
     /** What one host round-trip produced. */
     sealed interface Reply {
-        data class Text(val content: String) : Reply
+        /** [streamed]: already shown live via [partial] — no typewriter. */
+        data class Text(val content: String, val streamed: Boolean = false) : Reply
         data class Confirm(val goalId: String, val tool: String) : Reply
         data class Error(val message: String) : Reply
     }
 
     data class InFlight(val profileId: String, val chatId: String)
+
+    /** Text streamed so far for the in-flight request (CD-03). */
+    data class Partial(val profileId: String, val chatId: String, val text: String)
 
     /** Agent tool confirmation waiting for the user's allow/deny. */
     data class PendingConfirm(val profileId: String, val chatId: String, val confirm: Reply.Confirm)
@@ -46,6 +51,17 @@ object ChatRequests {
 
     private val _inFlight = MutableStateFlow<InFlight?>(null)
     val inFlight: StateFlow<InFlight?> = _inFlight.asStateFlow()
+
+    /**
+     * Live text of a streaming reply. Lives here, not in the activity, so a
+     * rotation mid-answer redraws the bubble instead of losing it.
+     */
+    private val _partial = MutableStateFlow<Partial?>(null)
+    val partial: StateFlow<Partial?> = _partial.asStateFlow()
+
+    /** Ends the host-side generation of the running stream, if any. */
+    @Volatile
+    private var cancelHook: (() -> Unit)? = null
 
     /**
      * Kept until [takeConfirm] — a confirm dialog dismissed by rotation is
@@ -84,6 +100,8 @@ object ChatRequests {
                 runCatching(call).getOrElse { e -> Reply.Error(e.message ?: errorFallback) }
             }
             if (mySeq != seq) return@launch // aborted: UI already reset
+            cancelHook = null
+            _partial.value = null
             _inFlight.value = null
             deliver(app, profileId, chatId, reply)
         }
@@ -91,15 +109,33 @@ object ChatRequests {
     }
 
     /**
-     * Composer Stop: unlocks the UI and drops the reply when it arrives. The
-     * request itself still completes host-side — a real cancel needs the
-     * kernel-side chat.cancel (docs/CLIENT_DRIVEN_KERNEL_TASKS.md).
+     * Composer Stop: unlocks the UI and drops the reply when it arrives. A
+     * streaming request (CD-03) is also stopped host-side via its cancel
+     * hook; a plain one still completes there.
      */
     fun abort(): Boolean {
         if (_inFlight.value == null) return false
         seq++
+        cancelHook?.invoke()
+        cancelHook = null
+        _partial.value = null
         _inFlight.value = null
         return true
+    }
+
+    /** Called from the request thread once a stream can be stopped. */
+    fun setCancelHook(hook: () -> Unit) {
+        cancelHook = hook
+    }
+
+    /** Called from the request thread per streamed delta. */
+    fun appendPartial(profileId: String, chatId: String, delta: String) {
+        // a delta drained after Stop must not resurrect the cleared bubble
+        if (_inFlight.value != InFlight(profileId, chatId)) return
+        _partial.update { p ->
+            if (p?.profileId == profileId && p.chatId == chatId) p.copy(text = p.text + delta)
+            else Partial(profileId, chatId, delta)
+        }
     }
 
     /** Claims the pending confirmation once the user has answered it. */

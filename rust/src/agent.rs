@@ -16,7 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use prost::Message;
 use tokio::sync::{mpsc, watch};
 use vynkor_wire::framing::FLAG_RAW_BINARY;
-use vynkor_wire::proto::vynkor::{envelope, ActionRequest, ActionStatus, Envelope};
+use vynkor_wire::proto::vynkor::{envelope, ActionRequest, ActionStatus, Envelope, SessionClose};
 
 use crate::caps;
 use crate::error::AgentError;
@@ -24,7 +24,8 @@ use crate::ffi::{
     ActionReply, ActionReplyStatus, AgentConfig, AgentObserver, BatteryProvider, BluetoothProvider,
     BrightnessProvider, CalendarProvider, CallsProvider, ClipboardProvider, ConnectionStatus,
     ContactsProvider, DeviceInfoProvider, DndProvider, FlashlightProvider, LauncherProvider,
-    Location, LocationProvider, RingerProvider, SmsProvider, SpeakerSink, WifiProvider,
+    Location, LocationProvider, RingerProvider, SmsProvider, SpeakerSink, StreamListener,
+    WifiProvider,
 };
 use crate::protocol::{build_frame, check_payload_size, is_kernel_routed, target_str, Frame};
 use crate::transport::{DeviceConn, RegisterParams, BACKOFF_INITIAL, BACKOFF_MAX};
@@ -33,6 +34,15 @@ use rtrb::{Consumer, Producer, RingBuffer};
 /// Capability that carries outbound request/response traffic (target "kernel",
 /// routed by action name). It has no host→device actions of its own.
 pub const CHAT_CAP: &str = "chat";
+
+/// One streaming request the core is routing frames for (CD-03).
+struct StreamEntry {
+    listener: Arc<dyn StreamListener>,
+    accepted: bool,
+    /// Stop pressed before the provider accepted: the kernel refuses a
+    /// close for an unaccepted session, so the close goes out on acceptance.
+    cancelled: bool,
+}
 
 /// Extra headroom over a request's timeout so the kernel's own terminal
 /// `ACTION_TIMEOUT` response can arrive instead of the device racing it.
@@ -112,6 +122,8 @@ pub struct Agent {
     /// in-flight outbound requests, keyed by action_id; the inbound dispatch
     /// loop resolves these when the correlated ActionResponse arrives
     pending: Mutex<HashMap<String, StdSender<ActionReply>>>,
+    /// CD-03: in-flight streaming requests, keyed by action_id
+    streams: Mutex<HashMap<String, StreamEntry>>,
     action_seq: AtomicU64,
     /// outbound frames dropped because a per-cap queue was full or an
     /// oversized payload was rejected; logged and reset at session teardown
@@ -156,6 +168,7 @@ impl Agent {
             caps: Mutex::new(HashMap::new()),
             live: AtomicUsize::new(0),
             pending: Mutex::new(HashMap::new()),
+            streams: Mutex::new(HashMap::new()),
             action_seq: AtomicU64::new(0),
             dropped_outbound: AtomicU64::new(0),
             observer: Mutex::new(None),
@@ -221,6 +234,7 @@ impl Agent {
         self.live.store(0, Ordering::Relaxed);
         lock(&self.opus_decoders).clear();
         self.purge_pending();
+        self.purge_streams();
         *lock(&self.state) = AgentState::Stopped;
     }
 
@@ -399,6 +413,74 @@ impl Agent {
         }
     }
 
+    /// CD-03: send an `ActionRequest{streaming: true}` and route its
+    /// session frames to `listener` instead of blocking for one reply.
+    /// Returns the action_id to pass to [`Agent::cancel_stream`]; when the
+    /// request cannot even be sent the listener gets `on_failed` (Local)
+    /// before this returns.
+    pub fn request_stream(
+        &self,
+        target: String,
+        action: String,
+        params_json: Vec<u8>,
+        timeout_ms: u32,
+        listener: Arc<dyn StreamListener>,
+    ) -> String {
+        let action_id = self.next_action_id();
+        lock(&self.streams).insert(
+            action_id.clone(),
+            StreamEntry {
+                listener: Arc::clone(&listener),
+                accepted: false,
+                cancelled: false,
+            },
+        );
+        let req = ActionRequest {
+            action_id: action_id.clone(),
+            action,
+            params_json,
+            timeout_ms,
+            streaming: true,
+            caller_plugin_id: String::new(),
+        };
+        if let Err(error) = self.send_chat_envelope(&target, envelope::Payload::ActionRequest(req))
+        {
+            lock(&self.streams).remove(&action_id);
+            notify_stream(&listener, |l| {
+                l.on_failed(ActionReply {
+                    status: ActionReplyStatus::Local,
+                    data_json: Vec::new(),
+                    error,
+                })
+            });
+        }
+        action_id
+    }
+
+    /// Stop a stream started by [`Agent::request_stream`]: an accepted one
+    /// gets a `SessionClose` (the provider stops producing); an unaccepted
+    /// one is closed as soon as it is accepted. The listener hears nothing
+    /// more either way. Unknown ids are ignored.
+    pub fn cancel_stream(&self, action_id: String) {
+        let accepted = {
+            let mut streams = lock(&self.streams);
+            match streams.get_mut(&action_id) {
+                None => return,
+                Some(entry) if entry.accepted => {
+                    streams.remove(&action_id);
+                    true
+                }
+                Some(entry) => {
+                    entry.cancelled = true;
+                    false
+                }
+            }
+        };
+        if accepted {
+            self.close_session(&action_id);
+        }
+    }
+
     // ---- Kotlin -> Rust push paths (event-driven capabilities) ----
 
     /// PCM from the mic (Kotlin `AudioRecord`, 16 kHz mono s16le). v1: PCM
@@ -546,6 +628,80 @@ impl Agent {
 
     fn take_pending(&self, action_id: &str) -> Option<StdSender<ActionReply>> {
         lock(&self.pending).remove(action_id)
+    }
+
+    /// Encode + size-check + queue one envelope on the chat connection.
+    fn send_chat_envelope(&self, target: &str, payload: envelope::Payload) -> Result<(), String> {
+        let env = Envelope {
+            payload: Some(payload),
+            ..Default::default()
+        };
+        let mut bytes = Vec::new();
+        env.encode(&mut bytes)
+            .map_err(|_| "encode request".to_string())?;
+        check_payload_size(&bytes).map_err(|e| format!("request rejected: {e}"))?;
+        let out = self
+            .live_channel(CHAT_CAP)
+            .ok_or_else(|| "no live chat connection to host".to_string())?;
+        out.try_send(Outbound {
+            frame: build_frame(target, 0, bytes),
+        })
+        .map_err(|_| "send queue full".to_string())
+    }
+
+    fn close_session(&self, action_id: &str) {
+        let close = SessionClose {
+            action_id: action_id.to_string(),
+            reason: "client closed".into(),
+        };
+        if let Err(e) = self.send_chat_envelope("kernel", envelope::Payload::SessionClose(close)) {
+            tracing::warn!(action_id, error = %e, "stream close not sent");
+        }
+    }
+
+    /// Routes an `ActionResponse` for a streaming request; false when
+    /// `action_id` is not a stream (the caller falls back to `pending`).
+    fn route_stream_response(&self, resp: &vynkor_wire::proto::vynkor::ActionResponse) -> bool {
+        let ok = resp.status == ActionStatus::ActionOk as i32;
+        let mut streams = lock(&self.streams);
+        let Some(entry) = streams.get_mut(&resp.action_id) else {
+            return false;
+        };
+        if ok && entry.cancelled {
+            streams.remove(&resp.action_id);
+            drop(streams);
+            self.close_session(&resp.action_id);
+        } else if ok {
+            entry.accepted = true;
+            let listener = Arc::clone(&entry.listener);
+            drop(streams);
+            notify_stream(&listener, |l| l.on_accepted(resp.data_json.clone()));
+        } else if let Some(entry) = streams.remove(&resp.action_id) {
+            drop(streams);
+            if !entry.cancelled {
+                let reply = ActionReply {
+                    status: map_action_status(resp.status),
+                    data_json: resp.data_json.clone(),
+                    error: resp.error.clone(),
+                };
+                notify_stream(&entry.listener, |l| l.on_failed(reply));
+            }
+        }
+        true
+    }
+
+    /// Ends every open stream with `on_failed` — connection gone.
+    fn purge_streams(&self) {
+        let drained: Vec<StreamEntry> = lock(&self.streams).drain().map(|(_, e)| e).collect();
+        for entry in drained.into_iter().filter(|e| !e.cancelled) {
+            notify_stream(&entry.listener, |l| {
+                l.on_failed(ActionReply {
+                    status: ActionReplyStatus::Local,
+                    data_json: Vec::new(),
+                    error: "connection dropped".into(),
+                })
+            });
+        }
     }
 
     fn notify_state(&self, connected: bool) {
@@ -824,6 +980,41 @@ impl Agent {
                     agent.reply(&out, resp_env);
                 });
             }
+            Some(envelope::Payload::ActionResponse(resp)) if self.route_stream_response(&resp) => {}
+            Some(envelope::Payload::ActionResponseChunk(chunk)) => {
+                let listener = lock(&self.streams)
+                    .get(&chunk.action_id)
+                    .filter(|e| !e.cancelled)
+                    .map(|e| Arc::clone(&e.listener));
+                match listener {
+                    Some(l) => notify_stream(&l, |l| l.on_chunk(chunk.seq, chunk.chunk)),
+                    None => {
+                        tracing::trace!(action_id = %chunk.action_id, "chunk for no live stream")
+                    }
+                }
+            }
+            Some(envelope::Payload::ActionStreamAbort(abort)) => {
+                if let Some(entry) = lock(&self.streams).remove(&abort.action_id) {
+                    if !entry.cancelled {
+                        notify_stream(&entry.listener, |l| {
+                            l.on_failed(ActionReply {
+                                status: ActionReplyStatus::StreamBackpressure,
+                                data_json: Vec::new(),
+                                error: abort.reason,
+                            })
+                        });
+                    }
+                }
+            }
+            Some(envelope::Payload::SessionClose(close))
+                if lock(&self.streams).contains_key(&close.action_id) =>
+            {
+                if let Some(entry) = lock(&self.streams).remove(&close.action_id) {
+                    if !entry.cancelled {
+                        notify_stream(&entry.listener, |l| l.on_closed(close.reason));
+                    }
+                }
+            }
             Some(envelope::Payload::ActionResponse(resp)) => {
                 if let Some(tx) = self.take_pending(&resp.action_id) {
                     tracing::info!(
@@ -878,6 +1069,12 @@ fn spawn_device_loop(agent: Arc<Agent>, caps: Vec<String>, stop_rx: watch::Recei
     tokio::spawn(async move {
         device_loop(agent, caps, stop_rx).await;
     });
+}
+
+/// Listener callbacks cross into Kotlin; a throwing one must not take the
+/// inbound loop down with it (same guard as the observer callbacks).
+fn notify_stream(listener: &Arc<dyn StreamListener>, f: impl FnOnce(&dyn StreamListener)) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(listener.as_ref())));
 }
 
 fn map_action_status(status: i32) -> ActionReplyStatus {
@@ -1065,6 +1262,7 @@ async fn device_cycle(agent: Arc<Agent>, caps: Vec<String>) -> Result<(), AgentE
         }
     }
     agent.purge_pending();
+    agent.purge_streams();
     // Streams cut mid-utterance never deliver their EOS; drop their decoders.
     lock(&agent.opus_decoders).clear();
     let dropped = agent.dropped_outbound.swap(0, Ordering::Relaxed);
@@ -1147,6 +1345,161 @@ mod tests {
         );
         agent.stop();
         assert!(matches!(*lock(&agent.state), AgentState::Stopped));
+    }
+
+    /// Records listener callbacks in order.
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<String>>);
+
+    impl StreamListener for Recorder {
+        fn on_accepted(&self, data_json: Vec<u8>) {
+            lock(&self.0).push(format!("accepted:{}", String::from_utf8_lossy(&data_json)));
+        }
+        fn on_chunk(&self, seq: u32, chunk: Vec<u8>) {
+            lock(&self.0).push(format!("chunk{seq}:{}", String::from_utf8_lossy(&chunk)));
+        }
+        fn on_closed(&self, reason: String) {
+            lock(&self.0).push(format!("closed:{reason}"));
+        }
+        fn on_failed(&self, reply: ActionReply) {
+            lock(&self.0).push(format!("failed:{}", reply.error));
+        }
+    }
+
+    fn inbound(payload: envelope::Payload) -> Frame {
+        let env = Envelope {
+            payload: Some(payload),
+            ..Default::default()
+        };
+        let mut bytes = Vec::new();
+        env.encode(&mut bytes).unwrap();
+        build_frame("device", 0, bytes)
+    }
+
+    fn ok(id: &str, data: &str) -> envelope::Payload {
+        envelope::Payload::ActionResponse(vynkor_wire::proto::vynkor::ActionResponse {
+            action_id: id.into(),
+            status: ActionStatus::ActionOk as i32,
+            data_json: data.as_bytes().to_vec(),
+            error: String::new(),
+        })
+    }
+
+    /// Stream entry as request_stream leaves it, without needing a live
+    /// connection to send the request on.
+    fn open_stream(agent: &Agent, id: &str) -> Arc<Recorder> {
+        let rec = Arc::new(Recorder::default());
+        lock(&agent.streams).insert(
+            id.into(),
+            StreamEntry {
+                listener: rec.clone(),
+                accepted: false,
+                cancelled: false,
+            },
+        );
+        rec
+    }
+
+    #[tokio::test]
+    async fn stream_frames_reach_the_listener_in_order() {
+        let agent = Arc::new(Agent::new(test_config()));
+        let (out, _rx) = mpsc::channel(8);
+        let rec = open_stream(&agent, "s1");
+        for p in [
+            ok("s1", "{}"),
+            envelope::Payload::ActionResponseChunk(
+                vynkor_wire::proto::vynkor::ActionResponseChunk {
+                    action_id: "s1".into(),
+                    seq: 0,
+                    chunk: b"hi".to_vec(),
+                },
+            ),
+            envelope::Payload::SessionClose(SessionClose {
+                action_id: "s1".into(),
+                reason: "done".into(),
+            }),
+        ] {
+            agent.dispatch_inbound(&inbound(p), CHAT_CAP, &out).await;
+        }
+        assert_eq!(
+            *lock(&rec.0),
+            vec!["accepted:{}", "chunk0:hi", "closed:done"]
+        );
+        assert!(lock(&agent.streams).is_empty());
+    }
+
+    #[tokio::test]
+    async fn stream_error_reply_and_abort_fail_the_listener() {
+        let agent = Arc::new(Agent::new(test_config()));
+        let (out, _rx) = mpsc::channel(8);
+        let rec = open_stream(&agent, "s2");
+        let err = envelope::Payload::ActionResponse(vynkor_wire::proto::vynkor::ActionResponse {
+            action_id: "s2".into(),
+            status: ActionStatus::ActionError as i32,
+            data_json: Vec::new(),
+            error: "provider returned HTTP 401".into(),
+        });
+        agent.dispatch_inbound(&inbound(err), CHAT_CAP, &out).await;
+        assert_eq!(*lock(&rec.0), vec!["failed:provider returned HTTP 401"]);
+
+        let rec = open_stream(&agent, "s3");
+        agent
+            .dispatch_inbound(&inbound(ok("s3", "{}")), CHAT_CAP, &out)
+            .await;
+        let abort =
+            envelope::Payload::ActionStreamAbort(vynkor_wire::proto::vynkor::ActionStreamAbort {
+                action_id: "s3".into(),
+                reason: "idle".into(),
+            });
+        agent
+            .dispatch_inbound(&inbound(abort), CHAT_CAP, &out)
+            .await;
+        assert_eq!(*lock(&rec.0), vec!["accepted:{}", "failed:idle"]);
+        assert!(lock(&agent.streams).is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_before_acceptance_stays_silent_and_drops_the_entry() {
+        let agent = Arc::new(Agent::new(test_config()));
+        let (out, _rx) = mpsc::channel(8);
+        let rec = open_stream(&agent, "s4");
+        agent.cancel_stream("s4".into());
+        assert!(
+            lock(&agent.streams).contains_key("s4"),
+            "kept until acceptance to close it then"
+        );
+        agent
+            .dispatch_inbound(&inbound(ok("s4", "{}")), CHAT_CAP, &out)
+            .await;
+        assert!(
+            lock(&rec.0).is_empty(),
+            "a cancelled stream reports nothing"
+        );
+        assert!(lock(&agent.streams).is_empty());
+    }
+
+    #[test]
+    fn dropped_connection_fails_open_streams_and_unsent_request_fails_locally() {
+        let agent = Arc::new(Agent::new(test_config()));
+        let rec = open_stream(&agent, "s5");
+        agent.purge_streams();
+        assert_eq!(*lock(&rec.0), vec!["failed:connection dropped"]);
+
+        // no connection at all: fails before request_stream returns
+        let rec = Arc::new(Recorder::default());
+        let id = agent.request_stream(
+            "kernel".into(),
+            "chat_completion".into(),
+            b"{}".to_vec(),
+            0,
+            rec.clone(),
+        );
+        assert!(!id.is_empty());
+        assert_eq!(
+            *lock(&rec.0),
+            vec!["failed:no live chat connection to host"]
+        );
+        assert!(lock(&agent.streams).is_empty());
     }
 
     #[test]

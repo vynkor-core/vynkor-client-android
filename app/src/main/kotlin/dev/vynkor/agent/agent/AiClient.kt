@@ -52,6 +52,9 @@ sealed interface GoalOutcome {
 object AiClient {
     private const val TIMEOUT_MS = 30_000u
 
+    /** Longest silence between stream frames before giving up (CD-03). */
+    private const val STREAM_IDLE_MS = 60_000L
+
     /** A goal is a whole plan/act loop (several completions + tool calls). */
     private const val AGENT_TIMEOUT_MS = 300_000u
     private const val GOAL_MAX_CHARS = 4000
@@ -69,12 +72,56 @@ object AiClient {
         profile: HostProfile,
         messages: List<Pair<String, String>>,
         hostModelIds: Set<String> = emptySet(),
+    ): AiReply = ChatStream.parseReply(
+        request(agent, "chat_completion", chatParams(profile, messages, hostModelIds)),
+    )
+
+    /**
+     * CD-03: the same completion, streamed. `onDelta` gets text as the model
+     * produces it (on this IO thread); `onCancelable` receives a stop hook
+     * that ends the host-side generation, after which this returns what
+     * arrived so far with stopReason [ChatStream.STOPPED].
+     */
+    fun chatStream(
+        agent: Agent,
+        profile: HostProfile,
+        messages: List<Pair<String, String>>,
+        hostModelIds: Set<String>,
+        onDelta: (String) -> Unit,
+        onCancelable: ((() -> Unit)) -> Unit,
     ): AiReply {
+        val stream = ChatStream(onDelta)
+        val params = chatParams(profile, messages, hostModelIds)
+        val id = agent.requestStream(
+            "kernel",
+            "chat_completion",
+            params.toString().toByteArray(Charsets.UTF_8),
+            TIMEOUT_MS,
+            stream,
+        )
+        onCancelable {
+            agent.cancelStream(id)
+            stream.stop()
+        }
+        return try {
+            stream.await(STREAM_IDLE_MS)
+        } finally {
+            // a no-op for a finished stream; closes the session an old,
+            // non-streaming `ai` left open, or one we stopped waiting on
+            agent.cancelStream(id)
+        }
+    }
+
+    private fun chatParams(
+        profile: HostProfile,
+        messages: List<Pair<String, String>>,
+        hostModelIds: Set<String>,
+    ): JSONObject {
         val msgs = JSONArray()
         messages.forEach { (role, content) ->
             msgs.put(JSONObject().put("role", role).put("content", content))
         }
-        val params = JSONObject().apply {
+        return JSONObject().apply {
             val agentId = profile.aiAgent
             val model = profile.effectiveModel()
             if (agentId.isNotBlank()) {
@@ -92,14 +139,6 @@ object AiClient {
             put("max_tokens", 1024)
             put("timeout_ms", 30_000)
         }
-        val data = request(agent, "chat_completion", params)
-        val usage = data.optJSONObject("usage")
-        return AiReply(
-            content = data.optString("content"),
-            stopReason = data.optString("stop_reason"),
-            inputTokens = usage?.optLong("input_tokens") ?: 0L,
-            outputTokens = usage?.optLong("output_tokens") ?: 0L,
-        )
     }
 
     // ------------------------------------------------------ agent plugin
