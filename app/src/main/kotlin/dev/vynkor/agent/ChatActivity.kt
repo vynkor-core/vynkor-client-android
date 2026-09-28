@@ -1343,9 +1343,9 @@ class ChatActivity : AppCompatActivity() {
 
     /**
      * Composer Stop: unlock the UI immediately and drop the reply when it
-     * eventually arrives. The request itself still completes host-side —
-     * a real cancel needs the kernel-side chat.cancel (see
-     * docs/CLIENT_DRIVEN_KERNEL_TASKS.md).
+     * eventually arrives. The model route (CD-03 stream) also stops the
+     * generation host-side; an agent goal still runs to completion there
+     * until CD-04.
      */
     private fun abortGeneration() {
         // keep what the model already said; the stream is stopped host-side
@@ -1354,7 +1354,7 @@ class ChatActivity : AppCompatActivity() {
         if (partial != null && partial.text.isNotBlank()) {
             deliver(partial.profileId, partial.chatId, ChatMessage("assistant", partial.text), reveal = false)
         }
-        snack(R.string.generation_stopped)
+        snack(if (profile?.usesAgent == true) R.string.generation_stop_waiting else R.string.generation_stopped)
     }
 
     /** Stable id so DiffUtil updates the live bubble in place. */
