@@ -185,6 +185,8 @@ tasks.register<Exec>("cargoNdkBuild") {
     val outDir = File(projectDir, "build/rustLibs")
     inputs.files(fileTree("$rootDir/rust/src"))
     inputs.file("$rootDir/rust/Cargo.toml")
+    // linker flags (16 KB RELRO) live here; an edit must rebuild the .so
+    inputs.file("$rootDir/rust/.cargo/config.toml")
     outputs.dir(outDir)
     doFirst {
         outDir.mkdirs()
