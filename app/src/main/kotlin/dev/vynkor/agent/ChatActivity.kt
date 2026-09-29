@@ -238,6 +238,7 @@ class ChatActivity : AppCompatActivity() {
             onAttachmentTap = { chatId, attachment -> openAttachment(chatId, attachment) },
             onRetry = { retryAfterError(it) },
         )
+        adapter.liveId = liveMessageId
         list.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }
         list.adapter = adapter
         // Typewriter ticks rebind via payload; change cross-fades would flicker.
@@ -1328,7 +1329,9 @@ class ChatActivity : AppCompatActivity() {
      */
     private fun deliver(profileId: String, chatId: String, message: ChatMessage, reveal: Boolean = true) {
         if (profile?.id == profileId && chat.id == chatId) {
-            appendMessage(message)
+            // a streamed reply replaces the live bubble with a taller one
+            // (footer added); follow it or the buttons end up below the fold
+            appendMessage(message, scrollToEnd = !reveal)
             if (reveal) typewriterReveal(message)
             return
         }
@@ -1403,13 +1406,15 @@ class ChatActivity : AppCompatActivity() {
         else -> "file"
     }
 
-    private fun appendMessage(message: ChatMessage) {
+    private fun appendMessage(message: ChatMessage, scrollToEnd: Boolean = false) {
         val updated = chat.copy(
             messages = chat.messages + message,
             updatedAt = System.currentTimeMillis(),
         )
         chat = updated
-        adapter.append(message)
+        adapter.append(message) {
+            if (scrollToEnd) binding.messages.scrollToPosition(adapter.itemCount - 1)
+        }
         profile?.let { ChatStore.save(this, it.id, updated) }
         updateWelcome()
         refreshChatList()

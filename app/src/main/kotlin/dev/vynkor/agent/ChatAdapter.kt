@@ -50,6 +50,10 @@ class ChatAdapter(
     /** Chat id owning the current list; used to resolve attachment paths. */
     var chatId: String = ""
 
+    /** Id of the CD-03 streaming bubble: its text is still growing, so it
+     *  gets no copy/more/speak footer until the final reply replaces it. */
+    var liveId: String? = null
+
     private var speaking: ChatMessage? = null
 
     private var typingId: String? = null
@@ -74,13 +78,16 @@ class ChatAdapter(
         speaking = null
     }
 
-    fun append(message: ChatMessage) {
+    /** [onCommitted] runs once the row is actually in the list (the diff
+     *  is async), e.g. to scroll to it. */
+    fun append(message: ChatMessage, onCommitted: (() -> Unit)? = null) {
         val prevLast = latest.lastIndex
         latest = latest + message
         // The old last row may be an error showing Retry — rebind it so the
         // button goes away once it is no longer the latest turn.
         submitList(latest) {
             if (prevLast >= 0) notifyItemChanged(prevLast)
+            onCommitted?.invoke()
         }
     }
 
@@ -203,7 +210,8 @@ class ChatAdapter(
                     binding.bubble.setBackgroundResource(R.drawable.bubble_assistant)
                     renderAssistantText(message)
                     binding.messageText.setTextColor(color(R.color.on_surface))
-                    binding.footerRow.visibility = View.VISIBLE
+                    binding.footerRow.visibility =
+                        if (message.id == liveId) View.GONE else View.VISIBLE
                     val tint = color(R.color.on_surface_variant)
                     val activeTint = if (isSpeaking) {
                         com.google.android.material.color.MaterialColors.getColor(
@@ -431,6 +439,9 @@ class ChatAdapter(
             val prismTheme =
                 if (night) Prism4jThemeDarkula.create() else Prism4jThemeDefault.create()
             return Markwon.builder(ctx)
+                // Models write poems, addresses and lists as single-newline
+                // lines; CommonMark would join them into one paragraph.
+                .usePlugin(io.noties.markwon.SoftBreakAddsNewLinePlugin.create())
                 .usePlugin(TablePlugin.create(ctx))
                 .usePlugin(StrikethroughPlugin.create())
                 .usePlugin(LinkifyPlugin.create())
