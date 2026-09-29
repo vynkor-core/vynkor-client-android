@@ -55,9 +55,18 @@ class ChatAdapter(
     private var typingId: String? = null
     private var typingRevealed: Int = 0
 
+    /**
+     * The list last handed to [submitList]. [currentList] lags behind it
+     * until the async diff lands, so building on [currentList] resurrects
+     * rows a newer submit already dropped — the CD-03 live bubble showed up
+     * twice when [append] followed the submit that removed it.
+     */
+    private var latest: List<ChatMessage> = emptyList()
+
     fun submit(messages: List<ChatMessage>) {
+        latest = messages.toList()
         // Last row rebinds so Retry tracks which error is the latest turn.
-        submitList(messages.toList()) {
+        submitList(latest) {
             if (itemCount > 0) notifyItemChanged(itemCount - 1)
         }
         typingId = null
@@ -66,10 +75,11 @@ class ChatAdapter(
     }
 
     fun append(message: ChatMessage) {
-        val prevLast = currentList.lastIndex
+        val prevLast = latest.lastIndex
+        latest = latest + message
         // The old last row may be an error showing Retry — rebind it so the
         // button goes away once it is no longer the latest turn.
-        submitList(currentList + message) {
+        submitList(latest) {
             if (prevLast >= 0) notifyItemChanged(prevLast)
         }
     }
@@ -82,7 +92,8 @@ class ChatAdapter(
             position > 0 && getItem(position - 1).role == "user"
 
     fun clear() {
-        submitList(emptyList())
+        latest = emptyList()
+        submitList(latest)
         typingId = null
         typingRevealed = 0
         speaking = null

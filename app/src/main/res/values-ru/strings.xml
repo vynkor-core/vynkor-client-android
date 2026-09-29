@@ -76,7 +76,8 @@
     <string name="delete_project">Удалить проект</string>
     <string name="delete_project_confirm">Удалить этот проект? Его чаты перейдут в «Без проекта».</string>
     <string name="all_chats">Все чаты</string>
-    <string name="generation_stopped">Ожидание ответа остановлено</string>
+    <string name="generation_stopped">Генерация остановлена</string>
+    <string name="generation_stop_waiting">Ожидание ответа остановлено</string>
     <string name="conv_mode_title">Режим диалога</string>
     <string name="conv_mode_hint">После озвучки ответа снова включается микрофон — диалог без рук</string>
     <string name="chat_duplicate">Дублировать</string>
